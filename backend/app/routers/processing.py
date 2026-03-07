@@ -3,9 +3,10 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import tempfile
+import traceback
 from datetime import datetime
 
-from app.services.supabase_client import get_supabase_client, get_supabase_admin
+from app.services.supabase_client import get_supabase_admin
 from app.services.preprocessing_service import get_preprocessing_service
 from app.services.ocr_service import get_ocr_service
 from app.services.extraction_service import get_extraction_service
@@ -37,28 +38,30 @@ async def process_invoice(request: ProcessRequest, background_tasks: BackgroundT
     3. Run OCR
     4. Extract fields
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     # Get invoice
-    invoice = supabase.table('invoices').select('*').eq('id', request.invoice_id).single().execute()
-    
-    if not invoice.data:
+    invoice_result = supabase.table('invoices').select('*').eq('id', request.invoice_id).execute()
+
+    if not invoice_result.data:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    
-    if invoice.data['status'] not in ['uploaded', 'failed']:
+
+    invoice = invoice_result.data[0]
+
+    if invoice['status'] not in ['uploaded', 'failed']:
         raise HTTPException(status_code=400, detail="Invoice is already being processed or completed")
-    
+
     # Update status
     supabase.table('invoices').update({
         'status': 'preprocessing',
         'updated_at': datetime.utcnow().isoformat(),
     }).eq('id', request.invoice_id).execute()
-    
+
     # Add background task
     background_tasks.add_task(
         run_processing_pipeline,
         request.invoice_id,
-        invoice.data['file_path'],
+        invoice['file_path'],
         request.skip_preprocessing,
         request.skip_ocr,
         request.skip_extraction,
@@ -79,7 +82,7 @@ async def run_processing_pipeline(
     skip_extraction: bool,
 ):
     """Run the full processing pipeline"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     try:
         # Download file from storage
@@ -91,26 +94,35 @@ async def run_processing_pipeline(
         processed_path = local_path
         
         # Step 1: Preprocessing
+        # PDFs are converted to images page-by-page inside extract_from_pdf(),
+        # so we skip the image-only preprocessing step for PDF inputs.
+        is_pdf = local_path.lower().endswith('.pdf')
+
         if not skip_preprocessing:
             supabase.table('invoices').update({'status': 'preprocessing'}).eq('id', invoice_id).execute()
-            
-            preprocessor = get_preprocessing_service()
-            result = preprocessor.preprocess(local_path)
-            processed_path = result['output_path']
-            
-            # Save preprocessing steps
-            for i, step in enumerate(result['steps_applied']):
-                supabase.table('preprocessing_steps').insert({
-                    'invoice_id': invoice_id,
-                    'step_name': step['name'],
-                    'step_order': i + 1,
-                    'parameters': step['params'],
-                    'success': True,
-                    'processing_time_ms': result['processing_time_ms'] // len(result['steps_applied']),
-                    'quality_metrics': result['quality_metrics'],
-                }).execute()
-            
-            supabase.table('invoices').update({'status': 'preprocessed'}).eq('id', invoice_id).execute()
+
+            if is_pdf:
+                # No image preprocessing for PDFs — mark step as done and move on
+                supabase.table('invoices').update({'status': 'preprocessed'}).eq('id', invoice_id).execute()
+            else:
+                preprocessor = get_preprocessing_service()
+                result = preprocessor.preprocess(local_path)
+                processed_path = result['output_path']
+
+                # Save preprocessing steps
+                step_count = max(len(result['steps_applied']), 1)
+                for i, step in enumerate(result['steps_applied']):
+                    supabase.table('preprocessing_steps').insert({
+                        'invoice_id': invoice_id,
+                        'step_name': step['name'],
+                        'step_order': i + 1,
+                        'parameters': step['params'],
+                        'success': True,
+                        'processing_time_ms': result['processing_time_ms'] // step_count,
+                        'quality_metrics': result['quality_metrics'],
+                    }).execute()
+
+                supabase.table('invoices').update({'status': 'preprocessed'}).eq('id', invoice_id).execute()
         
         # Step 2: OCR
         ocr_result = None
@@ -206,13 +218,18 @@ async def run_processing_pipeline(
             'updated_at': datetime.utcnow().isoformat(),
         }).eq('id', invoice_id).execute()
         
-        # Log error
+        # Log error with full traceback so we can identify the source
+        full_error = traceback.format_exc()
+        print("=== PIPELINE ERROR ===")
+        print(full_error)
+        print("=== END ERROR ===")
+        import sys; sys.stdout.flush()
         supabase.table('processing_logs').insert({
             'invoice_id': invoice_id,
             'log_level': 'error',
             'component': 'pipeline',
             'action': 'error',
-            'message': str(e),
+            'message': full_error,
         }).execute()
         
         raise
@@ -230,19 +247,21 @@ async def run_processing_pipeline(
 @router.get("/status/{invoice_id}")
 async def get_processing_status(invoice_id: str):
     """Get the processing status of an invoice"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
-    invoice = supabase.table('invoices').select('id, status, updated_at').eq('id', invoice_id).single().execute()
-    
-    if not invoice.data:
+    invoice_result = supabase.table('invoices').select('id, status, updated_at').eq('id', invoice_id).execute()
+
+    if not invoice_result.data:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    
+
+    invoice = invoice_result.data[0]
+
     # Get processing logs
     logs = supabase.table('processing_logs').select('*').eq('invoice_id', invoice_id).order('created_at', desc=True).limit(10).execute()
-    
+
     return {
         'invoice_id': invoice_id,
-        'status': invoice.data['status'],
-        'updated_at': invoice.data['updated_at'],
+        'status': invoice['status'],
+        'updated_at': invoice['updated_at'],
         'logs': logs.data,
     }

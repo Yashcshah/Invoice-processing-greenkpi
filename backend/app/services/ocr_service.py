@@ -1,4 +1,3 @@
-import pytesseract
 from PIL import Image
 import cv2
 import numpy as np
@@ -9,8 +8,8 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = settings.tesseract_path
+# NOTE: pytesseract is imported lazily inside _tesseract_ocr() to avoid
+# Python 3.13 compatibility issues at module load time.
 
 
 class OCRService:
@@ -47,28 +46,32 @@ class OCRService:
     
     def _tesseract_ocr(self, image: np.ndarray) -> Dict[str, Any]:
         """Perform OCR using Tesseract"""
+        # Lazy import to avoid Python 3.13 compatibility issues at module load time
+        import pytesseract
+        pytesseract.pytesseract.tesseract_cmd = settings.tesseract_path
+
         # Convert BGR to RGB
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb_image)
         
         # Get detailed OCR data
         ocr_data = pytesseract.image_to_data(
-            pil_image, 
+            pil_image,
             output_type=pytesseract.Output.DICT,
             config='--psm 6'  # Assume uniform block of text
         )
-        
+
         # Extract raw text
         raw_text = pytesseract.image_to_string(pil_image, config='--psm 6')
-        
+
         # Build word boxes with confidence
         word_boxes = []
         confidences = []
-        
+
         for i in range(len(ocr_data['text'])):
             text = ocr_data['text'][i].strip()
             conf = int(ocr_data['conf'][i])
-            
+
             if text and conf > 0:
                 word_boxes.append({
                     'text': text,
@@ -81,16 +84,22 @@ class OCRService:
                     'block_num': ocr_data['block_num'][i],
                 })
                 confidences.append(conf)
-        
+
         # Calculate average confidence
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-        
+
+        # get_tesseract_version() returns a Version object in newer pytesseract
+        try:
+            engine_version = str(pytesseract.get_tesseract_version())
+        except Exception:
+            engine_version = 'unknown'
+
         return {
             'raw_text': raw_text,
             'confidence_score': avg_confidence / 100.0,
             'word_boxes': word_boxes,
             'ocr_engine': 'tesseract',
-            'engine_version': pytesseract.get_tesseract_version().split()[0] if pytesseract.get_tesseract_version() else 'unknown',
+            'engine_version': engine_version,
         }
     
     def _easyocr_ocr(self, image: np.ndarray) -> Dict[str, Any]:
@@ -129,25 +138,53 @@ class OCRService:
         }
     
     def extract_from_pdf(self, pdf_path: str) -> List[Dict[str, Any]]:
-        """Extract text from each page of a PDF"""
-        from pdf2image import convert_from_path
-        
-        pages = convert_from_path(pdf_path)
+        """Extract text from each page of a PDF using PyMuPDF.
+
+        Uses direct text extraction (no OCR) which is faster, more accurate,
+        and avoids pytesseract/Python 3.13 compatibility issues.
+        """
+        import fitz  # PyMuPDF
+
         results = []
-        
-        for i, page in enumerate(pages):
-            # Convert PIL image to numpy array
-            image = np.array(page)
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            
-            # Save temp image
-            temp_path = f"/tmp/page_{i}.png"
-            cv2.imwrite(temp_path, image)
-            
-            result = self.extract_text(temp_path)
-            result['page_number'] = i + 1
-            results.append(result)
-        
+        doc = fitz.open(pdf_path)
+
+        try:
+            for page_num in range(len(doc)):
+                start_time = time.time()
+                page = doc[page_num]
+
+                # Direct text extraction — no OCR needed for text-based PDFs
+                raw_text = page.get_text("text")
+
+                # Extract word positions: (x0, y0, x1, y1, word, block_no, line_no, word_no)
+                word_boxes = []
+                for w in page.get_text("words"):
+                    x0, y0, x1, y1, word, block_no, line_no, word_no = w
+                    word_boxes.append({
+                        'text': word,
+                        'x': int(x0),
+                        'y': int(y0),
+                        'width': int(x1 - x0),
+                        'height': int(y1 - y0),
+                        'confidence': 1.0,
+                        'line_num': line_no,
+                        'block_num': block_no,
+                    })
+
+                processing_time = int((time.time() - start_time) * 1000)
+
+                results.append({
+                    'raw_text': raw_text,
+                    'confidence_score': 1.0 if word_boxes else 0.0,
+                    'word_boxes': word_boxes,
+                    'ocr_engine': 'pymupdf',
+                    'engine_version': fitz.version[0],
+                    'processing_time_ms': processing_time,
+                    'page_number': page_num + 1,
+                })
+        finally:
+            doc.close()
+
         return results
 
 

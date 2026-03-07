@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from app.services.supabase_client import get_supabase_client
+from app.services.supabase_client import get_supabase_admin
 from app.services.extraction_service import get_extraction_service
 
 router = APIRouter()
@@ -22,7 +22,7 @@ class ValidateFieldsRequest(BaseModel):
 @router.get("/fields/{invoice_id}")
 async def get_extracted_fields(invoice_id: str):
     """Get all extracted fields for an invoice"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     fields = supabase.table('extracted_fields').select('*').eq('invoice_id', invoice_id).execute()
     line_items = supabase.table('line_items').select('*').eq('invoice_id', invoice_id).order('line_number').execute()
@@ -36,7 +36,7 @@ async def get_extracted_fields(invoice_id: str):
 @router.post("/validate")
 async def validate_fields(request: ValidateFieldsRequest):
     """Validate and correct extracted fields"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     updated_fields = []
     
@@ -69,25 +69,27 @@ async def validate_fields(request: ValidateFieldsRequest):
 @router.post("/reextract/{invoice_id}")
 async def reextract_fields(invoice_id: str):
     """Re-extract fields using the latest rules"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     # Get OCR results
-    ocr = supabase.table('ocr_results').select('*').eq('invoice_id', invoice_id).single().execute()
-    
-    if not ocr.data:
+    ocr_result = supabase.table('ocr_results').select('*').eq('invoice_id', invoice_id).execute()
+
+    if not ocr_result.data:
         raise HTTPException(status_code=400, detail="No OCR results found. Run OCR first.")
-    
+
+    ocr = ocr_result.data[0]
+
     # Delete existing extracted fields
     supabase.table('extracted_fields').delete().eq('invoice_id', invoice_id).execute()
     supabase.table('line_items').delete().eq('invoice_id', invoice_id).execute()
-    
+
     # Re-extract
     extractor = get_extraction_service()
     fields = extractor.extract_fields(
-        ocr.data['raw_text'],
-        ocr.data.get('word_boxes', [])
+        ocr['raw_text'],
+        ocr.get('word_boxes', [])
     )
-    
+
     # Save extracted fields
     for field_name, field_data in fields.items():
         supabase.table('extracted_fields').insert({
@@ -98,11 +100,11 @@ async def reextract_fields(invoice_id: str):
             'extraction_method': field_data['extraction_method'],
             'confidence_score': field_data['confidence_score'],
         }).execute()
-    
+
     # Extract line items
     line_items = extractor.extract_line_items(
-        ocr.data['raw_text'],
-        ocr.data.get('word_boxes', [])
+        ocr['raw_text'],
+        ocr.get('word_boxes', [])
     )
     
     for item in line_items:
@@ -127,7 +129,7 @@ async def reextract_fields(invoice_id: str):
 @router.get("/rules")
 async def get_extraction_rules():
     """Get all extraction rules"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     rules = supabase.table('extraction_rules').select('*').eq('is_active', True).order('priority', desc=True).execute()
     
@@ -137,7 +139,7 @@ async def get_extraction_rules():
 @router.post("/rules")
 async def create_extraction_rule(rule: Dict[str, Any]):
     """Create a new extraction rule"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     result = supabase.table('extraction_rules').insert(rule).execute()
     
@@ -147,7 +149,7 @@ async def create_extraction_rule(rule: Dict[str, Any]):
 @router.get("/accuracy")
 async def get_extraction_accuracy():
     """Get extraction accuracy metrics"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     # Get all validated fields
     fields = supabase.table('extracted_fields').select('*').eq('is_validated', True).execute()

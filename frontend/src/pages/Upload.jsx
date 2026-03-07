@@ -16,6 +16,7 @@ export default function Upload() {
   const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState({})
+  const [uploadErrors, setUploadErrors] = useState({})
 
   const onDrop = useCallback((acceptedFiles) => {
     const newFiles = acceptedFiles.map(file => ({
@@ -48,15 +49,17 @@ export default function Upload() {
     if (files.length === 0) return
 
     setUploading(true)
+    setUploadErrors({})
 
     // Get current user
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       alert('Please log in to upload files')
+      setUploading(false)
       return
     }
 
-    // Get user's organization
+    // Get user's organization (optional — upload still works without one)
     const { data: orgMembers } = await supabase
       .from('organization_members')
       .select('organization_id')
@@ -66,6 +69,9 @@ export default function Upload() {
 
     const organizationId = orgMembers?.[0]?.organization_id
 
+    // Track success locally (not via stale state)
+    let successCount = 0
+
     for (const fileItem of files) {
       setUploadStatus(prev => ({ ...prev, [fileItem.id]: 'uploading' }))
 
@@ -73,9 +79,9 @@ export default function Upload() {
         // Generate unique filename
         const fileExt = fileItem.file.name.split('.').pop()
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
-        const filePath = organizationId 
+        const filePath = organizationId
           ? `${organizationId}/${fileName}`
-          : `uploads/${fileName}`
+          : `${user.id}/${fileName}`
 
         // Upload to Supabase Storage
         const { error: uploadError } = await supabase.storage
@@ -88,7 +94,7 @@ export default function Upload() {
         const { error: dbError } = await supabase
           .from('invoices')
           .insert({
-            organization_id: organizationId,
+            organization_id: organizationId || null,
             uploaded_by: user.id,
             original_filename: fileItem.file.name,
             file_path: filePath,
@@ -101,20 +107,22 @@ export default function Upload() {
         if (dbError) throw dbError
 
         setUploadStatus(prev => ({ ...prev, [fileItem.id]: 'success' }))
+        successCount++
       } catch (error) {
         console.error('Upload error:', error)
         setUploadStatus(prev => ({ ...prev, [fileItem.id]: 'error' }))
+        setUploadErrors(prev => ({
+          ...prev,
+          [fileItem.id]: error.message || 'Upload failed. Check console for details.',
+        }))
       }
     }
 
     setUploading(false)
 
-    // Check if all uploads were successful
-    const allSuccess = files.every(f => uploadStatus[f.id] === 'success')
-    if (allSuccess) {
-      setTimeout(() => {
-        navigate('/invoices')
-      }, 1500)
+    // Navigate only if ALL files succeeded (using local counter, not stale state)
+    if (successCount === files.length) {
+      setTimeout(() => navigate('/invoices'), 1500)
     }
   }
 
@@ -197,6 +205,11 @@ export default function Upload() {
                   <p className="text-sm text-gray-500">
                     {(fileItem.file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
+                  {uploadErrors[fileItem.id] && (
+                    <p className="text-xs text-red-600 mt-0.5">
+                      {uploadErrors[fileItem.id]}
+                    </p>
+                  )}
                 </div>
 
                 {/* Status */}

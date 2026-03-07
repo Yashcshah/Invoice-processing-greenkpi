@@ -265,28 +265,35 @@ CREATE POLICY "Authenticated users can view extraction rules" ON extraction_rule
     FOR SELECT USING (auth.uid() IS NOT NULL);
 
 -- ============================================================
--- 13. STORAGE BUCKET
--- Run these in Supabase Dashboard → Storage → New bucket
--- OR uncomment if using the Supabase admin API:
+-- 13. STORAGE BUCKET + POLICIES
+-- The bucket already exists. Run this to add the missing policies.
 -- ============================================================
--- NOTE: Create the 'invoices-raw' storage bucket manually in:
--- Supabase Dashboard → Storage → New bucket
--- Name: invoices-raw
--- Public: NO (private bucket)
---
--- Then add this storage policy (Dashboard → Storage → Policies):
--- Policy name: "Users can upload their invoices"
--- Allowed operation: INSERT
--- Policy: (auth.uid()::text) = (storage.foldername(name))[1]
---
--- Policy name: "Users can read their invoices"
--- Allowed operation: SELECT
--- Policy: (auth.uid()::text) = (storage.foldername(name))[1]
+
+-- Ensure bucket exists (safe to re-run)
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('invoices-raw', 'invoices-raw', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Allow authenticated users to upload files to the bucket
+CREATE POLICY "Authenticated users can upload invoices"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (bucket_id = 'invoices-raw');
+
+-- Allow authenticated users to read/download their files
+CREATE POLICY "Authenticated users can read invoices"
+ON storage.objects FOR SELECT TO authenticated
+USING (bucket_id = 'invoices-raw');
+
+-- Allow authenticated users to delete their files
+CREATE POLICY "Authenticated users can delete invoices"
+ON storage.objects FOR DELETE TO authenticated
+USING (bucket_id = 'invoices-raw');
+
+-- Allow authenticated users to update files (needed for reprocessing)
+CREATE POLICY "Authenticated users can update invoices"
+ON storage.objects FOR UPDATE TO authenticated
+USING (bucket_id = 'invoices-raw');
 
 -- ============================================================
 -- DONE!
--- After running this SQL:
--- 1. Create 'invoices-raw' storage bucket (private) in Supabase Dashboard → Storage
--- 2. Add storage policies as described above
--- 3. Create backend/.env with your SUPABASE_SERVICE_KEY
 -- ============================================================

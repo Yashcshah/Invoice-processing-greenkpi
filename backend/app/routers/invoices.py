@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import uuid
 
-from app.services.supabase_client import get_supabase_client
+from app.services.supabase_client import get_supabase_admin
 
 router = APIRouter()
 
@@ -31,7 +31,7 @@ async def list_invoices(
     offset: int = 0,
 ):
     """List all invoices"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     query = supabase.table('invoices').select('*', count='exact')
     
@@ -52,25 +52,25 @@ async def list_invoices(
 @router.get("/{invoice_id}")
 async def get_invoice(invoice_id: str):
     """Get a single invoice with all related data"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     # Get invoice
-    invoice = supabase.table('invoices').select('*').eq('id', invoice_id).single().execute()
-    
-    if not invoice.data:
+    invoice_result = supabase.table('invoices').select('*').eq('id', invoice_id).execute()
+
+    if not invoice_result.data:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    
+
     # Get OCR results
     ocr = supabase.table('ocr_results').select('*').eq('invoice_id', invoice_id).execute()
-    
+
     # Get extracted fields
     fields = supabase.table('extracted_fields').select('*').eq('invoice_id', invoice_id).execute()
-    
+
     # Get line items
     line_items = supabase.table('line_items').select('*').eq('invoice_id', invoice_id).execute()
-    
+
     return {
-        'invoice': invoice.data,
+        'invoice': invoice_result.data[0],
         'ocr_results': ocr.data,
         'extracted_fields': fields.data,
         'line_items': line_items.data,
@@ -80,18 +80,20 @@ async def get_invoice(invoice_id: str):
 @router.delete("/{invoice_id}")
 async def delete_invoice(invoice_id: str):
     """Delete an invoice"""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     # Check if invoice exists
-    invoice = supabase.table('invoices').select('id, file_path').eq('id', invoice_id).single().execute()
-    
-    if not invoice.data:
+    invoice_result = supabase.table('invoices').select('id, file_path').eq('id', invoice_id).execute()
+
+    if not invoice_result.data:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    
+
+    invoice = invoice_result.data[0]
+
     # Delete from storage
-    if invoice.data.get('file_path'):
+    if invoice.get('file_path'):
         try:
-            supabase.storage.from_('invoices-raw').remove([invoice.data['file_path']])
+            supabase.storage.from_('invoices-raw').remove([invoice['file_path']])
         except:
             pass  # Ignore storage errors
     
@@ -113,7 +115,7 @@ async def update_invoice_status(invoice_id: str, status: str):
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
     
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     
     result = supabase.table('invoices').update({
         'status': status,

@@ -1,3 +1,15 @@
+# Python 3.13 compatibility: packaging.version.Version has no .split() method,
+# but pytesseract calls it internally when comparing versions.
+# This patch adds .split() before any other imports run.
+try:
+    from packaging.version import Version as _PkgVersion
+    if not hasattr(_PkgVersion, 'split'):
+        _PkgVersion.split = lambda self, sep=None, maxsplit=-1: (
+            str(self).split(sep, maxsplit) if maxsplit >= 0 else str(self).split(sep)
+        )
+except (ImportError, Exception):
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import invoices, processing, extraction

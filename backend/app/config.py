@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # OCR
     tesseract_path: str = "C:/Program Files/Tesseract-OCR/tesseract.exe"
     ocr_engine: str = "tesseract"
+    poppler_path: str = ""  # e.g. C:/Program Files/poppler/Library/bin
     
     # Models
     ner_model_path: str = "./ml_models/ner_model"
