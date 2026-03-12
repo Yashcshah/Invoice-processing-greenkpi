@@ -129,20 +129,6 @@ Frontend will run at: http://localhost:3000
 
 ---
 
-## Sprint Milestones
-
-| Sprint | Weeks | Focus | Milestone |
-|--------|-------|-------|-----------|
-| 0 | Pre-semester | Setup & Planning | ✅ Environment ready |
-| 1 | Weeks 1-2 | OCR Foundation | Basic text extraction working |
-| 2 | Weeks 3-4 | Preprocessing & Accuracy | >90% OCR accuracy |
-| 3 | Weeks 5-6 | Field Extraction (Rules) | Rule-based extraction for 5+ fields |
-| 4 | Weeks 7-8 | AI Model Training | NER model trained, >80% accuracy |
-| 5 | Weeks 9-10 | Integration & UI | End-to-end workflow complete |
-| 6 | Weeks 11-12 | Testing & Refinement | Production-ready |
-
----
-
 ## Troubleshooting
 
 ### "Tesseract not found" error
@@ -188,15 +174,4 @@ Frontend will run at: http://localhost:3000
 
 ---
 
-## Next Steps
 
-After setup is complete:
-
-1. **Sprint 1**: Test OCR with sample invoices
-2. **Sprint 2**: Improve preprocessing (deskew, denoise, contrast)
-3. **Sprint 3**: Add more extraction patterns
-4. **Sprint 4**: Train NER model with labeled data
-5. **Sprint 5**: Build complete UI workflow
-6. **Sprint 6**: Testing and documentation
-
-Good luck with your project! 🚀
