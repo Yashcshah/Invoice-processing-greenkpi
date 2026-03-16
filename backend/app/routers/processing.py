@@ -194,8 +194,29 @@ async def run_processing_pipeline(
                     **item,
                 }).execute()
             
+            # Denormalize vendor_name + match against user folders to suggest one
+            vendor_name = (
+                fields.get('vendor_name', {}).get('normalized_value')
+                or fields.get('vendor_name', {}).get('raw_value')
+            )
+            if vendor_name:
+                vendor_name = vendor_name.strip() or None
+
+            folder_update: dict = {}
+            if vendor_name:
+                folder_update['vendor_name'] = vendor_name
+                folders_result = supabase.table('invoice_folders').select('id, name').execute()
+                for folder in folders_result.data:
+                    folder_lower = folder['name'].lower()
+                    vendor_lower = vendor_name.lower()
+                    if folder_lower in vendor_lower or vendor_lower in folder_lower:
+                        folder_update['suggested_folder_id'] = folder['id']
+                        break
+            if folder_update:
+                supabase.table('invoices').update(folder_update).eq('id', invoice_id).execute()
+
             supabase.table('invoices').update({'status': 'extraction_complete'}).eq('id', invoice_id).execute()
-        
+
         # Mark as complete
         supabase.table('invoices').update({
             'status': 'extraction_complete',

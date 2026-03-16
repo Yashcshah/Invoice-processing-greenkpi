@@ -12,6 +12,9 @@ router = APIRouter()
 class InvoiceResponse(BaseModel):
     id: str
     original_filename: str
+    vendor_name: Optional[str]
+    folder_id: Optional[str]
+    suggested_folder_id: Optional[str]
     status: str
     file_type: Optional[str]
     file_size_bytes: Optional[int]
@@ -27,16 +30,21 @@ class InvoiceListResponse(BaseModel):
 @router.get("/", response_model=InvoiceListResponse)
 async def list_invoices(
     status: Optional[str] = None,
+    folder_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ):
     """List all invoices"""
     supabase = get_supabase_admin()
-    
+
     query = supabase.table('invoices').select('*', count='exact')
-    
+
     if status:
         query = query.eq('status', status)
+    if folder_id == 'none':
+        query = query.is_('folder_id', 'null')
+    elif folder_id:
+        query = query.eq('folder_id', folder_id)
     
     query = query.order('created_at', desc=True)
     query = query.range(offset, offset + limit - 1)
@@ -47,6 +55,18 @@ async def list_invoices(
         'invoices': result.data,
         'total': result.count or len(result.data),
     }
+
+
+@router.patch("/{invoice_id}/folder")
+async def assign_folder(invoice_id: str, folder_id: Optional[str] = None):
+    """Assign or remove a folder from an invoice. Omit/pass null folder_id to unassign."""
+    supabase = get_supabase_admin()
+    supabase.table('invoices').update({
+        'folder_id': folder_id,
+        'suggested_folder_id': None,
+        'updated_at': datetime.utcnow().isoformat(),
+    }).eq('id', invoice_id).execute()
+    return {'message': 'Folder updated'}
 
 
 @router.get("/{invoice_id}")

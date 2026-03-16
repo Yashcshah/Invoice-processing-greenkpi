@@ -12,6 +12,7 @@ import {
   Edit2,
   X,
   Check,
+  Folder,
 } from 'lucide-react'
 
 const STATUS_STYLES = {
@@ -47,10 +48,14 @@ export default function InvoiceDetail() {
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const [folders, setFolders] = useState([])
+  const [assigningFolder, setAssigningFolder] = useState(false)
+
   const pollRef = useRef(null)
 
   useEffect(() => {
     fetchData()
+    axios.get('/api/folders').then(res => setFolders(res.data.folders)).catch(() => {})
     return () => clearInterval(pollRef.current)
   }, [id])
 
@@ -132,6 +137,33 @@ export default function InvoiceDetail() {
       setSaving(false)
     }
   }
+
+  const assignFolder = async (folderId) => {
+    setAssigningFolder(true)
+    try {
+      await axios.patch(`/api/invoices/${id}/folder`, null, { params: { folder_id: folderId } })
+      await fetchData()
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to assign folder')
+    } finally {
+      setAssigningFolder(false)
+    }
+  }
+
+  const dismissSuggestion = async () => {
+    try {
+      await axios.patch(`/api/invoices/${id}/folder`)
+      setInvoice(prev => prev ? { ...prev, suggested_folder_id: null } : prev)
+    } catch { /* ignore */ }
+  }
+
+  const suggestedFolder = invoice?.suggested_folder_id
+    ? folders.find(f => f.id === invoice.suggested_folder_id)
+    : null
+
+  const currentFolder = invoice?.folder_id
+    ? folders.find(f => f.id === invoice.folder_id)
+    : null
 
   const isActivelyProcessing = invoice && PROCESSING_STATUSES.includes(invoice.status)
   const canProcess = invoice && ['uploaded', 'failed'].includes(invoice.status)
@@ -238,6 +270,48 @@ export default function InvoiceDetail() {
           </div>
         )}
       </div>
+
+      {/* Folder suggestion banner */}
+      {suggestedFolder && !invoice?.folder_id && (
+        <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <Folder className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <span className="flex-1 text-amber-800">
+            This looks like a <strong>{suggestedFolder.name}</strong> invoice. Move it to the {suggestedFolder.name} folder?
+          </span>
+          <button
+            onClick={() => assignFolder(suggestedFolder.id)}
+            disabled={assigningFolder}
+            className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600 disabled:opacity-50"
+          >
+            Move
+          </button>
+          <button
+            onClick={dismissSuggestion}
+            className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg text-xs hover:bg-amber-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Current folder + manual assign */}
+      {folders.length > 0 && (
+        <div className="flex items-center gap-3 text-sm">
+          <Folder className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          <span className="text-gray-500">Folder:</span>
+          <select
+            value={invoice?.folder_id || ''}
+            onChange={e => assignFolder(e.target.value || null)}
+            disabled={assigningFolder}
+            className="px-2 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white disabled:opacity-50"
+          >
+            <option value="">— Unassigned —</option>
+            {folders.map(f => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Extracted Fields */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

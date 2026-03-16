@@ -295,5 +295,40 @@ ON storage.objects FOR UPDATE TO authenticated
 USING (bucket_id = 'invoices-raw');
 
 -- ============================================================
+-- MIGRATION: Invoice folder classification
+-- Run this block separately if schema was already applied above
+-- ============================================================
+
+-- User-created folders for invoice classification
+CREATE TABLE IF NOT EXISTS invoice_folders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    created_by UUID REFERENCES auth.users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Add folder columns to invoices
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS vendor_name TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS folder_id UUID REFERENCES invoice_folders(id) ON DELETE SET NULL;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS suggested_folder_id UUID REFERENCES invoice_folders(id) ON DELETE SET NULL;
+
+-- Indexes for fast folder filtering
+CREATE INDEX IF NOT EXISTS idx_invoices_folder_id ON invoices(folder_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_vendor_name ON invoices(vendor_name);
+
+-- RLS for invoice_folders
+ALTER TABLE invoice_folders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage their folders" ON invoice_folders
+    FOR ALL USING (
+        auth.uid() = created_by
+        OR organization_id IN (
+            SELECT organization_id FROM organization_members
+            WHERE user_id = auth.uid() AND is_active = true
+        )
+    );
+
+-- ============================================================
 -- DONE!
 -- ============================================================
