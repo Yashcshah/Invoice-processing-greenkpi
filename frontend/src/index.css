@@ -5,3 +5,103 @@
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
+
+/* ── Smooth scrollbar ─────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* ── Staggered animation helpers ─────────────────────── */
+.stagger-1  { animation-delay: 0.05s; }
+.stagger-2  { animation-delay: 0.10s; }
+.stagger-3  { animation-delay: 0.15s; }
+.stagger-4  { animation-delay: 0.20s; }
+.stagger-5  { animation-delay: 0.25s; }
+.stagger-6  { animation-delay: 0.30s; }
+
+/* ── Shimmer skeleton ────────────────────────────────── */
+.shimmer-bg {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite linear;
+}
+
+/* ── Glass card ─────────────────────────────────────── */
+.glass {
+  backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.4);
+}
+
+/* ── Gradient text ──────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Card hover lift ────────────────────────────────── */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 30px -8px rgba(0,0,0,0.12);
+}
+
+/* ── Collapsible section (max-height accordion) ────── */
+.collapse-transition {
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity    0.25s ease;
+}
+.collapse-transition.collapsed {
+  max-height: 0 !important;
+  opacity: 0;
+}
+.collapse-transition.expanded {
+  opacity: 1;
+}
+
+/* ── Confidence score bar ─────────────────────────── */
+.confidence-bar-track {
+  height: 6px;
+  background: #f3f4f6;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+.confidence-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  width: 0%;
+  transition: width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Status badge pulsing ring (processing states) ── */
+.status-ring {
+  position: relative;
+}
+.status-ring::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  opacity: 0;
+  animation: pulseSoft 1.4s ease-in-out infinite;
+}
+
+/* ── Edit field active glow ───────────────────────── */
+.field-edit-active {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+  transition: box-shadow 0.2s ease;
+}
+
+/* ── Focus ring polish ──────────────────────────────── */
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+}
