@@ -8,7 +8,11 @@ import {
   Eye,
   Trash2,
   RefreshCw,
-  Upload
+  Upload,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  X,
 } from 'lucide-react'
 
 export default function Invoices() {
@@ -17,9 +21,18 @@ export default function Invoices() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
+  const [folders, setFolders] = useState([])
+  const [selectedFolderId, setSelectedFolderId] = useState(null)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [showNewFolder, setShowNewFolder] = useState(false)
+
+  useEffect(() => {
+    axios.get('/api/folders').then(res => setFolders(res.data.folders)).catch(() => {})
+  }, [])
+
   useEffect(() => {
     fetchInvoices()
-  }, [statusFilter])
+  }, [statusFilter, selectedFolderId])
 
   const fetchInvoices = async () => {
     setLoading(true)
@@ -31,6 +44,11 @@ export default function Invoices() {
 
       if (statusFilter !== 'all') {
         query = query.eq('status', statusFilter)
+      }
+      if (selectedFolderId === 'none') {
+        query = query.is('folder_id', null)
+      } else if (selectedFolderId) {
+        query = query.eq('folder_id', selectedFolderId)
       }
 
       const { data, error } = await query
@@ -83,6 +101,29 @@ export default function Invoices() {
     }
   }
 
+  const createFolder = async () => {
+    if (!newFolderName.trim()) return
+    try {
+      const res = await axios.post('/api/folders', { name: newFolderName.trim() })
+      setFolders(prev => [...prev, res.data].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewFolderName('')
+      setShowNewFolder(false)
+    } catch {
+      alert('Failed to create folder')
+    }
+  }
+
+  const deleteFolder = async (folderId) => {
+    if (!confirm('Delete this folder? Invoices inside will become unassigned.')) return
+    try {
+      await axios.delete(`/api/folders/${folderId}`)
+      setFolders(prev => prev.filter(f => f.id !== folderId))
+      if (selectedFolderId === folderId) setSelectedFolderId(null)
+    } catch {
+      alert('Failed to delete folder')
+    }
+  }
+
   const getStatusBadge = (status) => {
     const styles = {
       uploaded: 'bg-gray-100 text-gray-700',
@@ -121,6 +162,83 @@ export default function Invoices() {
           {notification.msg}
         </div>
       )}
+
+      <div className="flex gap-6 items-start">
+        {/* Folder sidebar */}
+        <aside className="w-52 flex-shrink-0 bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Folders</h2>
+            <button
+              onClick={() => setShowNewFolder(true)}
+              title="New folder"
+              className="p-1 text-gray-400 hover:text-blue-600 rounded transition-colors"
+            >
+              <FolderPlus className="w-4 h-4" />
+            </button>
+          </div>
+
+          {showNewFolder && (
+            <div className="px-3 py-2 border-b border-gray-100 flex gap-1">
+              <input
+                autoFocus
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') createFolder()
+                  if (e.key === 'Escape') { setShowNewFolder(false); setNewFolderName('') }
+                }}
+                placeholder="Folder name"
+                className="flex-1 text-sm px-2 py-1 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 outline-none"
+              />
+              <button onClick={createFolder} className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Add</button>
+            </div>
+          )}
+
+          <nav className="py-1">
+            <button
+              onClick={() => setSelectedFolderId(null)}
+              className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition-colors ${selectedFolderId === null ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+            >
+              <FolderOpen className="w-4 h-4 flex-shrink-0" />
+              All Invoices
+            </button>
+
+            {folders.map(folder => (
+              <div
+                key={folder.id}
+                onClick={() => setSelectedFolderId(folder.id)}
+                className={`group flex items-center gap-2 px-4 py-2 text-sm cursor-pointer transition-colors ${selectedFolderId === folder.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+              >
+                <Folder className="w-4 h-4 flex-shrink-0" />
+                <span className="flex-1 truncate">{folder.name}</span>
+                <button
+                  onClick={e => { e.stopPropagation(); deleteFolder(folder.id) }}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-red-500 transition-all"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+
+            {folders.length === 0 && !showNewFolder && (
+              <p className="px-4 py-3 text-xs text-gray-400 italic">No folders yet</p>
+            )}
+          </nav>
+        </aside>
+
+        {/* Main content */}
+        <div className="flex-1 min-w-0 space-y-4">
+          {/* Active folder breadcrumb */}
+          {selectedFolderId && selectedFolderId !== 'none' && (
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <Folder className="w-4 h-4 text-blue-500" />
+              <span className="font-medium">{folders.find(f => f.id === selectedFolderId)?.name}</span>
+              <button onClick={() => setSelectedFolderId(null)} className="ml-1 text-gray-400 hover:text-gray-700">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1 relative">
@@ -180,6 +298,9 @@ export default function Invoices() {
                     Filename
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Vendor
+                  </th>
+                  <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
                   <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -213,6 +334,9 @@ export default function Invoices() {
                           </p>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-700">
+                      {invoice.vendor_name || <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(invoice.status)}`}>
@@ -263,6 +387,8 @@ export default function Invoices() {
           </div>
         )}
       </div>
+        </div>{/* end main content */}
+      </div>{/* end flex row */}
     </div>
   )
 }

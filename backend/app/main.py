@@ -12,7 +12,7 @@ except (ImportError, Exception):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import invoices, processing, extraction
+from app.routers import invoices, processing, extraction, folders
 from app.config import get_settings
 
 settings = get_settings()
@@ -36,6 +36,7 @@ app.add_middleware(
 app.include_router(invoices.router, prefix="/api/invoices", tags=["invoices"])
 app.include_router(processing.router, prefix="/api/processing", tags=["processing"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
+app.include_router(folders.router, prefix="/api/folders", tags=["folders"])
 
 @app.get("/")
 async def root():
