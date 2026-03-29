@@ -512,51 +512,58 @@ export default function InvoiceDetail() {
     }
   }
 
-  const exportPreviewAsPdf = async () => {
-    if (!previewRef.current) return
+const exportPreviewAsPdf = async () => {
+  if (!previewRef.current) return
 
-    try {
-      setExportingPdf(true)
+  try {
+    setExportingPdf(true)
 
-      const canvas = await html2canvas(previewRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#f8f8f5',
-      })
+    const canvas = await html2canvas(previewRef.current, {
+      scale: 1.2,
+      useCORS: true,
+      backgroundColor: '#f8f8f5',
+      logging: false,
+    })
 
-      const imgData = canvas.toDataURL('image/png')
+    const imgData = canvas.toDataURL('image/jpeg', 0.72)
 
-      const pdf = new jsPDF('p', 'mm', 'a4')
-      const pdfWidth = pdf.internal.pageSize.getWidth()
-      const pdfHeight = pdf.internal.pageSize.getHeight()
+    const pdf = new jsPDF({
+      orientation: 'p',
+      unit: 'mm',
+      format: 'a4',
+      compress: true,
+    })
 
-      const imgWidth = pdfWidth
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
+    const pdfWidth = pdf.internal.pageSize.getWidth()
+    const pdfHeight = pdf.internal.pageSize.getHeight()
 
-      let heightLeft = imgHeight
-      let position = 0
+    const imgWidth = pdfWidth
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
 
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+    let heightLeft = imgHeight
+    let position = 0
+
+    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pdfHeight
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight
+      pdf.addPage()
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight)
       heightLeft -= pdfHeight
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
-        heightLeft -= pdfHeight
-      }
-
-      const filename =
-        invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
-
-      pdf.save(`${filename}-preview.pdf`)
-    } catch (err) {
-      console.error('Failed to export PDF:', err)
-      alert('Failed to export PDF')
-    } finally {
-      setExportingPdf(false)
     }
+
+    const filename =
+      invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
+
+    pdf.save(`${filename}-preview.pdf`)
+  } catch (err) {
+    console.error('Failed to export PDF:', err)
+    alert('Failed to export PDF')
+  } finally {
+    setExportingPdf(false)
   }
+}
 
   const startEditField = (field) => {
     setEditingFieldId(field.id)
