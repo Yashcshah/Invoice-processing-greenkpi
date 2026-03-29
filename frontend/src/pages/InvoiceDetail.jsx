@@ -54,12 +54,14 @@ const cleanText = (value) => {
 const isProbablyNoisy = (value) => {
   const text = cleanText(value)
   if (!text) return true
-  if (text.length > 120) return true
+  if (text.length > 160) return true
 
   const badKeywords = [
     'invoice details',
     'property details',
     'water charges summary',
+    'gas consumption charges',
+    'electricity usage summary',
     'total amount due',
     'gst',
     'subtotal',
@@ -83,7 +85,7 @@ const safeField = (fields, name, fallback = '') => {
   return value
 }
 
-const safeShortField = (fields, name, fallback = '', maxLen = 50) => {
+const safeShortField = (fields, name, fallback = '', maxLen = 80) => {
   const value = safeField(fields, name, fallback)
   if (!value) return fallback
   if (value.length > maxLen) return fallback
@@ -99,7 +101,7 @@ const money = (value) => {
   if (value == null || value === '') return '-'
   const cleaned = String(value).replace(/[^0-9.-]/g, '')
   const num = Number(cleaned)
-  if (Number.isNaN(num)) return value
+  if (Number.isNaN(num)) return String(value)
   return `$${num.toFixed(2)}`
 }
 
@@ -115,7 +117,7 @@ const formatDate = (value) => {
   return text
 }
 
-const getPreviewLabel = (invoice, extractedFields, ocrText) => {
+const getPreviewStyle = (invoice, extractedFields, ocrText) => {
   const text = [
     invoice?.original_filename || '',
     ocrText || '',
@@ -127,7 +129,6 @@ const getPreviewLabel = (invoice, extractedFields, ocrText) => {
 
   if (text.includes('gas') || text.includes('natural gas')) {
     return {
-      title: 'ACCOUNT',
       subtitle: 'Billing Statement',
       infoTitle: 'Customer & Site Information',
       chargesTitle: 'Charges Summary',
@@ -144,7 +145,6 @@ const getPreviewLabel = (invoice, extractedFields, ocrText) => {
 
   if (text.includes('electricity')) {
     return {
-      title: 'ACCOUNT',
       subtitle: 'Billing Statement',
       infoTitle: 'Customer & Site Information',
       chargesTitle: 'Charges Summary',
@@ -161,7 +161,6 @@ const getPreviewLabel = (invoice, extractedFields, ocrText) => {
 
   if (text.includes('water')) {
     return {
-      title: 'ACCOUNT',
       subtitle: 'Billing Statement',
       infoTitle: 'Customer & Site Information',
       chargesTitle: 'Charges Summary',
@@ -177,7 +176,6 @@ const getPreviewLabel = (invoice, extractedFields, ocrText) => {
   }
 
   return {
-    title: 'ACCOUNT',
     subtitle: 'Billing Statement',
     infoTitle: 'Customer & Site Information',
     chargesTitle: 'Charges Summary',
@@ -192,35 +190,37 @@ const getPreviewLabel = (invoice, extractedFields, ocrText) => {
   }
 }
 
-function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, previewRef }) {
-  const ui = getPreviewLabel(invoice, extractedFields, ocrText)
+function InvoicePreviewCard({
+  extractedFields,
+  lineItems,
+  invoice,
+  ocrText,
+  previewRef,
+  onEditField,
+}) {
+  const ui = getPreviewStyle(invoice, extractedFields, ocrText)
+
+  const getFieldObj = (name) => extractedFields.find((f) => f.field_name === name)
 
   const vendorName =
-    safeShortField(extractedFields, 'vendor_name', '', 80) ||
-    safeShortField(extractedFields, 'supplier_name', '', 80) ||
+    safeShortField(extractedFields, 'vendor_name') ||
+    safeShortField(extractedFields, 'supplier_name') ||
     '-'
 
-  const abn =
-    safeShortField(extractedFields, 'abn', '', 30) ||
-    '-'
+  const abn = safeShortField(extractedFields, 'abn', '-', 30) || '-'
 
   const invoiceNumber =
     safeShortField(extractedFields, 'invoice_number', '', 40) ||
     safeShortField(extractedFields, 'invoice_id', '', 40) ||
     '-'
 
-  const invoiceDate =
-    safeShortField(extractedFields, 'invoice_date', '', 30) || '-'
-
-  const dueDate =
-    safeShortField(extractedFields, 'due_date', '', 30) || '-'
-
-  const billingPeriod =
-    safeField(extractedFields, 'billing_period', '') || '-'
+  const invoiceDate = safeShortField(extractedFields, 'invoice_date', '-', 30) || '-'
+  const dueDate = safeShortField(extractedFields, 'due_date', '-', 30) || '-'
+  const billingPeriod = safeField(extractedFields, 'billing_period', '-') || '-'
 
   const customerName =
-    safeShortField(extractedFields, 'customer_name', '', 80) ||
-    safeShortField(extractedFields, 'company_name', '', 80) ||
+    safeShortField(extractedFields, 'customer_name') ||
+    safeShortField(extractedFields, 'company_name') ||
     '-'
 
   const siteName =
@@ -233,18 +233,13 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
     safeField(extractedFields, 'property_address', '') ||
     '-'
 
-  const meterId =
-    safeShortField(extractedFields, 'meter_id', '', 40) ||
-    '-'
+  const meterId = safeShortField(extractedFields, 'meter_id', '-', 40) || '-'
 
-  const subtotal =
-    safeShortField(extractedFields, 'subtotal', '', 20) || '-'
-
+  const subtotal = safeShortField(extractedFields, 'subtotal', '-', 20) || '-'
   const gst =
     safeShortField(extractedFields, 'gst', '', 20) ||
     safeShortField(extractedFields, 'tax_amount', '', 20) ||
     '-'
-
   const totalAmount =
     safeShortField(extractedFields, 'total_amount', '', 20) ||
     safeShortField(extractedFields, 'total_amount_due', '', 20) ||
@@ -284,12 +279,31 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
     return `$${num.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}${suffix}`
   }
 
+  const EditableValue = ({ fieldName, displayValue, className = '' }) => {
+    const field = getFieldObj(fieldName)
+
+    if (!field) {
+      return <span className={className}>{displayValue}</span>
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => onEditField(field)}
+        className={`text-left hover:bg-yellow-50 rounded px-1 -mx-1 transition ${className}`}
+        title="Click to edit"
+      >
+        {displayValue}
+      </button>
+    )
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up">
       <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
         <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
         <p className="text-xs text-gray-400 mt-0.5">
-          Template layout using backend extracted data only
+          Click a value to edit it
         </p>
       </div>
 
@@ -304,13 +318,15 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
                 className="text-[28px] leading-tight font-bold tracking-wide"
                 style={{ color: ui.accent }}
               >
-                {textOrDash(vendorName)}
+                <EditableValue fieldName="vendor_name" displayValue={textOrDash(vendorName)} />
               </h1>
             </div>
 
             <div className="mt-3 text-left text-[15px] leading-7 text-gray-900">
               <div>{ui.subtitle}</div>
-              <div>ABN: {textOrDash(abn)}</div>
+              <div>
+                ABN: <EditableValue fieldName="abn" displayValue={textOrDash(abn)} />
+              </div>
             </div>
           </div>
 
@@ -318,38 +334,30 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
             className="border text-center font-bold text-[18px] py-2 mb-6"
             style={{ color: ui.accent, borderColor: ui.accent }}
           >
-            {ui.title}
+            ACCOUNT
           </div>
 
           <div className="border border-gray-400 bg-white mb-8 overflow-hidden">
             <table className="w-full border-collapse text-[15px]">
               <tbody>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
-                    Invoice ID
-                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">Invoice ID</td>
                   <td className="border border-gray-300 px-3 py-2 w-[30%]">
-                    {textOrDash(invoiceNumber)}
+                    <EditableValue fieldName="invoice_number" displayValue={textOrDash(invoiceNumber)} />
                   </td>
-                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
-                    Invoice Date
-                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">Invoice Date</td>
                   <td className="border border-gray-300 px-3 py-2 w-[30%]">
-                    {formatDate(invoiceDate)}
+                    <EditableValue fieldName="invoice_date" displayValue={formatDate(invoiceDate)} />
                   </td>
                 </tr>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">
-                    Billing Period
-                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">Billing Period</td>
                   <td className="border border-gray-300 px-3 py-2">
-                    {textOrDash(billingPeriod)}
+                    <EditableValue fieldName="billing_period" displayValue={textOrDash(billingPeriod)} />
                   </td>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">
-                    Due Date
-                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">Due Date</td>
                   <td className="border border-gray-300 px-3 py-2">
-                    {formatDate(dueDate)}
+                    <EditableValue fieldName="due_date" displayValue={formatDate(dueDate)} />
                   </td>
                 </tr>
               </tbody>
@@ -364,47 +372,35 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
             <table className="w-full border-collapse text-[15px] bg-white">
               <tbody>
                 <tr>
-                  <td
-                    className="border border-gray-300 px-3 py-2 font-medium w-[25%]"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
+                  <td className="border border-gray-300 px-3 py-2 font-medium w-[25%]" style={{ backgroundColor: ui.sectionBg }}>
                     {ui.customerLabel}
                   </td>
                   <td className="border border-gray-300 px-3 py-2">
-                    {textOrDash(customerName)}
+                    <EditableValue fieldName="customer_name" displayValue={textOrDash(customerName)} />
                   </td>
                 </tr>
                 <tr>
-                  <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
+                  <td className="border border-gray-300 px-3 py-2 font-medium" style={{ backgroundColor: ui.sectionBg }}>
                     {ui.siteLabel}
                   </td>
                   <td className="border border-gray-300 px-3 py-2">
-                    {textOrDash(siteName)}
+                    <EditableValue fieldName="site_name" displayValue={textOrDash(siteName)} />
                   </td>
                 </tr>
                 <tr>
-                  <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
+                  <td className="border border-gray-300 px-3 py-2 font-medium" style={{ backgroundColor: ui.sectionBg }}>
                     {ui.addressLabel}
                   </td>
                   <td className="border border-gray-300 px-3 py-2 break-words">
-                    {textOrDash(supplyAddress)}
+                    <EditableValue fieldName="supply_address" displayValue={textOrDash(supplyAddress)} />
                   </td>
                 </tr>
                 <tr>
-                  <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
+                  <td className="border border-gray-300 px-3 py-2 font-medium" style={{ backgroundColor: ui.sectionBg }}>
                     {ui.meterLabel}
                   </td>
                   <td className="border border-gray-300 px-3 py-2">
-                    {textOrDash(meterId)}
+                    <EditableValue fieldName="meter_id" displayValue={textOrDash(meterId)} />
                   </td>
                 </tr>
               </tbody>
@@ -430,26 +426,15 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
                   {cleanedLineItems.length > 0 ? (
                     cleanedLineItems.map((item) => (
                       <tr key={item.id}>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {textOrDash(item.description)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {textOrDash(item.quantity)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {renderRate(item)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2 text-right">
-                          {money(item.total_price)}
-                        </td>
+                        <td className="border border-gray-300 px-3 py-2">{textOrDash(item.description)}</td>
+                        <td className="border border-gray-300 px-3 py-2">{textOrDash(item.quantity)}</td>
+                        <td className="border border-gray-300 px-3 py-2">{renderRate(item)}</td>
+                        <td className="border border-gray-300 px-3 py-2 text-right">{money(item.total_price)}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td
-                        className="border border-gray-300 px-3 py-3 text-gray-400 italic"
-                        colSpan={4}
-                      >
+                      <td className="border border-gray-300 px-3 py-3 text-gray-400 italic" colSpan={4}>
                         No line items extracted
                       </td>
                     </tr>
@@ -460,27 +445,24 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
           </div>
 
           <div className="flex justify-center">
-            <table
-              className="w-full max-w-xl border-collapse text-[15px]"
-              style={{ backgroundColor: ui.summaryBg }}
-            >
+            <table className="w-full max-w-xl border-collapse text-[15px]" style={{ backgroundColor: ui.summaryBg }}>
               <tbody>
                 <tr>
                   <td className="border border-gray-300 px-3 py-2 font-medium">Subtotal</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">
-                    {money(subtotal)}
+                    <EditableValue fieldName="subtotal" displayValue={money(subtotal)} />
                   </td>
                 </tr>
                 <tr>
                   <td className="border border-gray-300 px-3 py-2 font-medium">GST (10%)</td>
                   <td className="border border-gray-300 px-3 py-2 text-right">
-                    {money(gst)}
+                    <EditableValue fieldName="tax_amount" displayValue={money(gst)} />
                   </td>
                 </tr>
                 <tr>
                   <td className="border border-gray-300 px-3 py-2 font-bold">TOTAL</td>
                   <td className="border border-gray-300 px-3 py-2 text-right font-bold">
-                    {money(totalAmount)}
+                    <EditableValue fieldName="total_amount" displayValue={money(totalAmount)} />
                   </td>
                 </tr>
               </tbody>
@@ -595,58 +577,58 @@ export default function InvoiceDetail() {
     }
   }
 
-const exportPreviewAsPdf = async () => {
-  if (!previewRef.current) return
+  const exportPreviewAsPdf = async () => {
+    if (!previewRef.current) return
 
-  try {
-    setExportingPdf(true)
+    try {
+      setExportingPdf(true)
 
-    const canvas = await html2canvas(previewRef.current, {
-      scale: 1.2,
-      useCORS: true,
-      backgroundColor: '#f8f8f5',
-      logging: false,
-    })
+      const canvas = await html2canvas(previewRef.current, {
+        scale: 1.2,
+        useCORS: true,
+        backgroundColor: '#f8f8f5',
+        logging: false,
+      })
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.72)
+      const imgData = canvas.toDataURL('image/jpeg', 0.72)
 
-    const pdf = new jsPDF({
-      orientation: 'p',
-      unit: 'mm',
-      format: 'a4',
-      compress: true,
-    })
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'mm',
+        format: 'a4',
+        compress: true,
+      })
 
-    const pdfWidth = pdf.internal.pageSize.getWidth()
-    const pdfHeight = pdf.internal.pageSize.getHeight()
+      const pdfWidth = pdf.internal.pageSize.getWidth()
+      const pdfHeight = pdf.internal.pageSize.getHeight()
 
-    const imgWidth = pdfWidth
-    const imgHeight = (canvas.height * imgWidth) / canvas.width
+      const imgWidth = pdfWidth
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
 
-    let heightLeft = imgHeight
-    let position = 0
+      let heightLeft = imgHeight
+      let position = 0
 
-    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight)
-    heightLeft -= pdfHeight
-
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight
-      pdf.addPage()
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight)
       heightLeft -= pdfHeight
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight
+        pdf.addPage()
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight)
+        heightLeft -= pdfHeight
+      }
+
+      const filename =
+        invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
+
+      pdf.save(`${filename}-preview.pdf`)
+    } catch (err) {
+      console.error('Failed to export PDF:', err)
+      alert('Failed to export PDF')
+    } finally {
+      setExportingPdf(false)
     }
-
-    const filename =
-      invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
-
-    pdf.save(`${filename}-preview.pdf`)
-  } catch (err) {
-    console.error('Failed to export PDF:', err)
-    alert('Failed to export PDF')
-  } finally {
-    setExportingPdf(false)
   }
-}
 
   const startEditField = (field) => {
     setEditingFieldId(field.id)
@@ -920,13 +902,14 @@ const exportPreviewAsPdf = async () => {
       )}
 
       {(hasFields || hasLineItems) && (
-        <InvoicePreviewCard
-          extractedFields={extractedFields}
-          lineItems={lineItems}
-          invoice={invoice}
-          ocrText={ocrText}
-          previewRef={previewRef}
-        />
+       <InvoicePreviewCard
+  extractedFields={extractedFields}
+  lineItems={lineItems}
+  invoice={invoice}
+  ocrText={ocrText}
+  previewRef={previewRef}
+  onEditField={startEditField}
+/>
       )}
 
       <div
@@ -988,20 +971,23 @@ const exportPreviewAsPdf = async () => {
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 group/field">
-                      <span className="text-sm text-gray-900 break-words">
-                        {field.validated_value ?? field.normalized_value ?? field.raw_value ?? (
-                          <span className="text-gray-400 italic">not extracted</span>
-                        )}
-                      </span>
-                      <button
-                        onClick={() => startEditField(field)}
-                        className="p-1 text-gray-300 hover:text-blue-600 rounded transition-colors opacity-0 group-hover/field:opacity-100"
-                        title="Edit value"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                 <div className="flex items-center justify-between gap-3 group/field">
+  <span className="text-sm text-gray-900 break-words flex-1">
+    {field.validated_value ?? field.normalized_value ?? field.raw_value ?? (
+      <span className="text-gray-400 italic">not extracted</span>
+    )}
+  </span>
+
+  <button
+    type="button"
+    onClick={() => startEditField(field)}
+    className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors text-xs font-medium"
+    title="Edit value"
+  >
+    <Edit2 className="w-3.5 h-3.5" />
+    Edit
+  </button>
+</div>
                   )}
                 </div>
 
