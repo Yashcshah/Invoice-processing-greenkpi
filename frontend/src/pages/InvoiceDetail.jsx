@@ -115,108 +115,147 @@ const formatDate = (value) => {
   return text
 }
 
-const findAddressFromOcr = (rawText = '') => {
-  const text = rawText
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
+const getPreviewLabel = (invoice, extractedFields, ocrText) => {
+  const text = [
+    invoice?.original_filename || '',
+    ocrText || '',
+    getFieldValue(extractedFields, 'vendor_name') || '',
+    getFieldValue(extractedFields, 'supplier_name') || '',
+  ]
+    .join(' ')
+    .toLowerCase()
 
-  const addressLine = text.find(
-    (line) =>
-      /\d+/.test(line) &&
-      /(street|st|road|rd|avenue|ave|drive|dr|lane|ln|qld|nsw|vic|sa|wa|tas|nt|act)/i.test(line)
-  )
-  return addressLine || ''
-}
+  if (text.includes('gas') || text.includes('natural gas')) {
+    return {
+      title: 'ACCOUNT',
+      subtitle: 'Billing Statement',
+      infoTitle: 'Customer & Site Information',
+      chargesTitle: 'Charges Summary',
+      customerLabel: 'Customer',
+      siteLabel: 'Site',
+      addressLabel: 'Address',
+      meterLabel: 'Meter ID',
+      accent: '#d35400',
+      sectionBg: '#f6dfb6',
+      tableHeaderBg: '#ef6c00',
+      summaryBg: '#f6f0da',
+    }
+  }
 
-const findVendorFromOcr = (rawText = '') => {
-  const lines = rawText
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return lines[0] || ''
-}
+  if (text.includes('electricity')) {
+    return {
+      title: 'ACCOUNT',
+      subtitle: 'Billing Statement',
+      infoTitle: 'Customer & Site Information',
+      chargesTitle: 'Charges Summary',
+      customerLabel: 'Customer',
+      siteLabel: 'Site',
+      addressLabel: 'Address',
+      meterLabel: 'Meter ID',
+      accent: '#1f4f99',
+      sectionBg: '#e8eef9',
+      tableHeaderBg: '#3b6fd8',
+      summaryBg: '#eef3fb',
+    }
+  }
 
-const findAbnFromOcr = (rawText = '') => {
-  const match = rawText.match(/ABN[:\s]+([\d\s]{8,20})/i)
-  return match ? match[1].trim() : ''
-}
+  if (text.includes('water')) {
+    return {
+      title: 'ACCOUNT',
+      subtitle: 'Billing Statement',
+      infoTitle: 'Customer & Site Information',
+      chargesTitle: 'Charges Summary',
+      customerLabel: 'Customer',
+      siteLabel: 'Site',
+      addressLabel: 'Address',
+      meterLabel: 'Meter ID',
+      accent: '#0d7f7a',
+      sectionBg: '#dff0ed',
+      tableHeaderBg: '#24a6a0',
+      summaryBg: '#f6f0da',
+    }
+  }
 
-const findInvoiceNumberFromOcr = (rawText = '') => {
-  const match = rawText.match(/Invoice\s*(ID|Number)[:\s]+([A-Z0-9\-_\/]+)/i)
-  return match ? match[2].trim() : ''
-}
-
-const findMeterIdFromOcr = (rawText = '') => {
-  const match = rawText.match(/Meter\s*ID[:\s]+([A-Z0-9\-_]+)/i)
-  return match ? match[1].trim() : ''
+  return {
+    title: 'ACCOUNT',
+    subtitle: 'Billing Statement',
+    infoTitle: 'Customer & Site Information',
+    chargesTitle: 'Charges Summary',
+    customerLabel: 'Customer',
+    siteLabel: 'Site',
+    addressLabel: 'Address',
+    meterLabel: 'Reference',
+    accent: '#0d7f7a',
+    sectionBg: '#e9f2f2',
+    tableHeaderBg: '#2f9e9e',
+    summaryBg: '#f4f4f4',
+  }
 }
 
 function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, previewRef }) {
+  const ui = getPreviewLabel(invoice, extractedFields, ocrText)
+
   const vendorName =
-    safeShortField(extractedFields, 'vendor_name', '', 40) ||
-    safeShortField(extractedFields, 'supplier_name', '', 40) ||
-    findVendorFromOcr(ocrText) ||
-    'Sydney Water'
+    safeShortField(extractedFields, 'vendor_name', '', 80) ||
+    safeShortField(extractedFields, 'supplier_name', '', 80) ||
+    '-'
 
   const abn =
     safeShortField(extractedFields, 'abn', '', 30) ||
-    findAbnFromOcr(ocrText) ||
-    '49 776 225 038'
+    '-'
 
   const invoiceNumber =
-    safeShortField(extractedFields, 'invoice_number', '', 30) ||
-    safeShortField(extractedFields, 'invoice_id', '', 30) ||
-    findInvoiceNumberFromOcr(ocrText) ||
-    'WATR_013'
+    safeShortField(extractedFields, 'invoice_number', '', 40) ||
+    safeShortField(extractedFields, 'invoice_id', '', 40) ||
+    '-'
 
   const invoiceDate =
-    safeShortField(extractedFields, 'invoice_date', '', 30) || '02/02/2026'
+    safeShortField(extractedFields, 'invoice_date', '', 30) || '-'
 
   const dueDate =
-    safeShortField(extractedFields, 'due_date', '', 30) || '16/02/2026'
+    safeShortField(extractedFields, 'due_date', '', 30) || '-'
 
   const billingPeriod =
-    safeField(extractedFields, 'billing_period', '') || '01/01/2026 to 28/01/2026'
+    safeField(extractedFields, 'billing_period', '') || '-'
 
   const customerName =
-    safeShortField(extractedFields, 'customer_name', '', 45) ||
-    safeShortField(extractedFields, 'company_name', '', 45) ||
-    'Coastal Hospitality Group'
+    safeShortField(extractedFields, 'customer_name', '', 80) ||
+    safeShortField(extractedFields, 'company_name', '', 80) ||
+    '-'
 
-  const propertyType =
-    safeShortField(extractedFields, 'property_type', '', 30) || 'Restaurant'
+  const siteName =
+    safeShortField(extractedFields, 'site_name', '', 60) ||
+    safeShortField(extractedFields, 'property_type', '', 60) ||
+    '-'
 
   const supplyAddress =
     safeField(extractedFields, 'supply_address', '') ||
     safeField(extractedFields, 'property_address', '') ||
-    findAddressFromOcr(ocrText) ||
-    '78 Beach Road, Gold Coast QLD 4217'
+    '-'
 
   const meterId =
-    safeShortField(extractedFields, 'meter_id', '', 30) ||
-    findMeterIdFromOcr(ocrText) ||
-    'WTR-230476'
+    safeShortField(extractedFields, 'meter_id', '', 40) ||
+    '-'
 
   const subtotal =
-    safeShortField(extractedFields, 'subtotal', '', 20) || '334.31'
+    safeShortField(extractedFields, 'subtotal', '', 20) || '-'
 
   const gst =
     safeShortField(extractedFields, 'gst', '', 20) ||
     safeShortField(extractedFields, 'tax_amount', '', 20) ||
-    '33.43'
+    '-'
 
   const totalAmount =
     safeShortField(extractedFields, 'total_amount', '', 20) ||
     safeShortField(extractedFields, 'total_amount_due', '', 20) ||
-    '367.74'
+    '-'
 
   const cleanedLineItems = (lineItems || [])
     .filter((item) => {
       const desc = cleanText(item.description)
       if (!desc) return false
       if (desc.toLowerCase() === 'abn:') return false
-      if (desc.length > 60) return false
+      if (desc.length > 120) return false
       return true
     })
     .map((item, index) => ({
@@ -227,42 +266,31 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
       total_price: item.total_price ?? '-',
     }))
 
-  const previewItems =
-    cleanedLineItems.length > 0
-      ? cleanedLineItems
-      : [
-          {
-            id: '1',
-            description: 'Water Consumption',
-            quantity: '120 kL',
-            unit_price: '2.46',
-            total_price: '295.20',
-          },
-          {
-            id: '2',
-            description: 'Service Charge',
-            quantity: '-',
-            unit_price: '-',
-            total_price: '39.11',
-          },
-        ]
-
   const renderRate = (item) => {
-    if (item.unit_price === '-' || item.unit_price == null) return '-'
+    if (item.unit_price === '-' || item.unit_price == null || item.unit_price === '') {
+      return '-'
+    }
+
     const cleaned = String(item.unit_price).replace(/[^0-9.-]/g, '')
     const num = Number(cleaned)
-    if (Number.isNaN(num)) return item.unit_price
+    if (Number.isNaN(num)) return String(item.unit_price)
 
     const q = String(item.quantity || '').toLowerCase()
-    const suffix = q.includes('kl') ? '/kL' : ''
-    return `$${num.toFixed(2)}${suffix}`
+    let suffix = ''
+    if (q.includes('kl')) suffix = '/kL'
+    else if (q.includes('mj')) suffix = '/MJ'
+    else if (q.includes('kwh')) suffix = '/kWh'
+
+    return `$${num.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}${suffix}`
   }
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up">
       <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
         <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
-        <p className="text-xs text-gray-400 mt-0.5">Reconstructed from extracted fields</p>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Template layout using backend extracted data only
+        </p>
       </div>
 
       <div className="p-4 md:p-8 bg-gray-50">
@@ -271,71 +299,127 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
           className="mx-auto max-w-5xl bg-[#f8f8f5] border border-gray-200 shadow-sm px-5 py-6 md:px-8 md:py-8"
         >
           <div className="mb-6">
-            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-              <div className="text-left text-[15px] leading-7 text-gray-900">
-                <div className="font-medium">{vendorName}</div>
-                <div>ABN: {abn}</div>
-              </div>
+            <div className="text-center">
+              <h1
+                className="text-[28px] leading-tight font-bold tracking-wide"
+                style={{ color: ui.accent }}
+              >
+                {textOrDash(vendorName)}
+              </h1>
+            </div>
 
-              <div className="text-center md:flex-1">
-                <h1 className="text-[28px] leading-tight font-bold tracking-wide text-[#0d7f7a]">
-                  {vendorName}
-                </h1>
-              </div>
-
-              <div className="hidden md:block w-[180px]" />
+            <div className="mt-3 text-left text-[15px] leading-7 text-gray-900">
+              <div>{ui.subtitle}</div>
+              <div>ABN: {textOrDash(abn)}</div>
             </div>
           </div>
 
-          <div className="border border-[#36a7a1] text-center text-[#0d7f7a] font-bold text-[18px] py-2 mb-6">
-            WATER SERVICES ACCOUNT
+          <div
+            className="border text-center font-bold text-[18px] py-2 mb-6"
+            style={{ color: ui.accent, borderColor: ui.accent }}
+          >
+            {ui.title}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-            <div className="border border-gray-400 bg-white">
-              <div className="bg-[#dff0ed] text-[#0d7f7a] font-bold px-4 py-2 text-[18px]">
-                Invoice Details
-              </div>
-              <div className="px-4 py-3 space-y-2 text-[15px] text-gray-900">
-                <div>
-                  <span className="font-medium">Invoice ID:</span> {textOrDash(invoiceNumber)}
-                </div>
-                <div>
-                  <span className="font-medium">Invoice Date:</span> {formatDate(invoiceDate)}
-                </div>
-                <div>
-                  <span className="font-medium">Due Date:</span> {formatDate(dueDate)}
-                </div>
-                <div>
-                  <span className="font-medium">Billing Period:</span> {textOrDash(billingPeriod)}
-                </div>
-              </div>
-            </div>
-
-            <div className="border border-gray-400 bg-white">
-              <div className="bg-[#dff0ed] text-[#0d7f7a] font-bold px-4 py-2 text-[18px]">
-                Property Details
-              </div>
-              <div className="px-4 py-3 space-y-2 text-[15px] text-gray-900">
-                <div className="font-medium">{textOrDash(customerName)}</div>
-                <div>{textOrDash(propertyType)}</div>
-                <div className="break-words">{textOrDash(supplyAddress)}</div>
-                <div>
-                  <span className="font-medium">Meter ID:</span> {textOrDash(meterId)}
-                </div>
-              </div>
-            </div>
+          <div className="border border-gray-400 bg-white mb-8 overflow-hidden">
+            <table className="w-full border-collapse text-[15px]">
+              <tbody>
+                <tr>
+                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
+                    Invoice ID
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2 w-[30%]">
+                    {textOrDash(invoiceNumber)}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
+                    Invoice Date
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2 w-[30%]">
+                    {formatDate(invoiceDate)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">
+                    Billing Period
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2">
+                    {textOrDash(billingPeriod)}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">
+                    Due Date
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2">
+                    {formatDate(dueDate)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div className="mb-10">
-            <h3 className="text-[#0d7f7a] font-bold text-[18px] mb-3">
-              Water Charges Summary
+            <h3 className="font-bold text-[18px] mb-3" style={{ color: ui.accent }}>
+              {ui.infoTitle}
+            </h3>
+
+            <table className="w-full border-collapse text-[15px] bg-white">
+              <tbody>
+                <tr>
+                  <td
+                    className="border border-gray-300 px-3 py-2 font-medium w-[25%]"
+                    style={{ backgroundColor: ui.sectionBg }}
+                  >
+                    {ui.customerLabel}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2">
+                    {textOrDash(customerName)}
+                  </td>
+                </tr>
+                <tr>
+                  <td
+                    className="border border-gray-300 px-3 py-2 font-medium"
+                    style={{ backgroundColor: ui.sectionBg }}
+                  >
+                    {ui.siteLabel}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2">
+                    {textOrDash(siteName)}
+                  </td>
+                </tr>
+                <tr>
+                  <td
+                    className="border border-gray-300 px-3 py-2 font-medium"
+                    style={{ backgroundColor: ui.sectionBg }}
+                  >
+                    {ui.addressLabel}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2 break-words">
+                    {textOrDash(supplyAddress)}
+                  </td>
+                </tr>
+                <tr>
+                  <td
+                    className="border border-gray-300 px-3 py-2 font-medium"
+                    style={{ backgroundColor: ui.sectionBg }}
+                  >
+                    {ui.meterLabel}
+                  </td>
+                  <td className="border border-gray-300 px-3 py-2">
+                    {textOrDash(meterId)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mb-6">
+            <h3 className="font-bold text-[18px] mb-3" style={{ color: ui.accent }}>
+              {ui.chargesTitle}
             </h3>
 
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-[15px] bg-white">
                 <thead>
-                  <tr className="bg-[#24a6a0] text-white">
+                  <tr style={{ backgroundColor: ui.tableHeaderBg }} className="text-white">
                     <th className="border border-gray-400 px-3 py-2 text-left">Description</th>
                     <th className="border border-gray-400 px-3 py-2 text-left">Usage</th>
                     <th className="border border-gray-400 px-3 py-2 text-left">Rate</th>
@@ -343,69 +427,68 @@ function InvoicePreviewCard({ extractedFields, lineItems, invoice, ocrText, prev
                   </tr>
                 </thead>
                 <tbody>
-                  {previewItems.map((item) => (
-                    <tr key={item.id}>
-                      <td className="border border-gray-300 px-3 py-2">
-                        {textOrDash(item.description)}
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2">
-                        {textOrDash(item.quantity)}
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2">
-                        {renderRate(item)}
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2 text-right">
-                        {money(item.total_price)}
+                  {cleanedLineItems.length > 0 ? (
+                    cleanedLineItems.map((item) => (
+                      <tr key={item.id}>
+                        <td className="border border-gray-300 px-3 py-2">
+                          {textOrDash(item.description)}
+                        </td>
+                        <td className="border border-gray-300 px-3 py-2">
+                          {textOrDash(item.quantity)}
+                        </td>
+                        <td className="border border-gray-300 px-3 py-2">
+                          {renderRate(item)}
+                        </td>
+                        <td className="border border-gray-300 px-3 py-2 text-right">
+                          {money(item.total_price)}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td
+                        className="border border-gray-300 px-3 py-3 text-gray-400 italic"
+                        colSpan={4}
+                      >
+                        No line items extracted
                       </td>
                     </tr>
-                  ))}
-
-                  <tr className="font-medium">
-                    <td className="border border-gray-300 px-3 py-2">Subtotal</td>
-                    <td className="border border-gray-300 px-3 py-2">-</td>
-                    <td className="border border-gray-300 px-3 py-2">-</td>
-                    <td className="border border-gray-300 px-3 py-2 text-right">
-                      {money(subtotal)}
-                    </td>
-                  </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
 
-          <div>
-            <h3 className="text-[#0d7f7a] font-bold text-[18px] mb-3">Amount Due</h3>
-
-            <div className="flex justify-center">
-              <table className="w-full max-w-md border-collapse text-[15px] bg-white">
-                <tbody>
-                  <tr>
-                    <td className="border border-[#7fa5a0] px-3 py-2 font-medium">Subtotal</td>
-                    <td className="border border-[#7fa5a0] px-3 py-2 text-right">
-                      {money(subtotal)}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="border border-[#7fa5a0] px-3 py-2 font-medium">GST (10%)</td>
-                    <td className="border border-[#7fa5a0] px-3 py-2 text-right">
-                      {money(gst)}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="border border-[#7fa5a0] px-3 py-2 font-bold text-[#0d7f7a]">
-                      TOTAL AMOUNT DUE
-                    </td>
-                    <td className="border border-[#7fa5a0] px-3 py-2 text-right font-bold text-[#0d7f7a]">
-                      {money(totalAmount)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div className="flex justify-center">
+            <table
+              className="w-full max-w-xl border-collapse text-[15px]"
+              style={{ backgroundColor: ui.summaryBg }}
+            >
+              <tbody>
+                <tr>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">Subtotal</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">
+                    {money(subtotal)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="border border-gray-300 px-3 py-2 font-medium">GST (10%)</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right">
+                    {money(gst)}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="border border-gray-300 px-3 py-2 font-bold">TOTAL</td>
+                  <td className="border border-gray-300 px-3 py-2 text-right font-bold">
+                    {money(totalAmount)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div className="mt-8 text-xs text-gray-400">
-            Preview generated from OCR/extraction for {invoice?.original_filename}
+            Preview generated from backend extracted fields for {invoice?.original_filename}
           </div>
         </div>
       </div>
