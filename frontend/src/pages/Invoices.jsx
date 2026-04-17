@@ -17,6 +17,7 @@ import {
   LayoutList,
   LayoutGrid,
   AlertCircle,
+  RotateCcw,
 } from 'lucide-react'
 
 // ── Tiny deterministic confidence-trend sparkline ─────────────────────────────
@@ -88,8 +89,9 @@ export default function Invoices() {
   const [newFolderName, setNewFolderName]         = useState('')
   const [showNewFolder, setShowNewFolder]         = useState(false)
 
-  const [processingIds, setProcessingIds] = useState(new Set())
-  const [notification, setNotification]   = useState(null)
+  const [processingIds, setProcessingIds]   = useState(new Set())
+  const [notification, setNotification]     = useState(null)
+  const [resettingStuck, setResettingStuck] = useState(false)
 
   // ── Bootstrap ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -180,6 +182,24 @@ export default function Invoices() {
       showNotification(err.response?.data?.detail || 'Failed to start processing', 'error')
     } finally {
       setProcessingIds(prev => { const s = new Set(prev); s.delete(id); return s })
+    }
+  }
+
+  const resetStuckInvoices = async () => {
+    setResettingStuck(true)
+    try {
+      const res = await axios.post('/api/processing/reset-stuck')
+      const { reset, invoices: list } = res.data
+      if (reset === 0) {
+        showNotification('No stuck invoices found — everything looks clean.', 'success')
+      } else {
+        showNotification(`Reset ${reset} stuck invoice${reset !== 1 ? 's' : ''} → ready to reprocess.`, 'success')
+      }
+      fetchInvoices()
+    } catch (err) {
+      showNotification(err.response?.data?.detail || 'Failed to reset stuck invoices', 'error')
+    } finally {
+      setResettingStuck(false)
     }
   }
 
@@ -458,6 +478,22 @@ export default function Invoices() {
                 <LayoutGrid className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
+
+            {/* Reset stuck button — only visible when stuck invoices exist */}
+            {invoices.some(inv => ['preprocessing','ocr_processing','extraction_processing'].includes(inv.status)) && (
+              <button
+                onClick={resetStuckInvoices}
+                disabled={resettingStuck}
+                title="Reset invoices stuck in a processing state back to failed so they can be reprocessed"
+                className="flex items-center gap-2 px-4 py-2.5 border border-amber-200 bg-amber-50
+                           rounded-xl hover:bg-amber-100 text-sm text-amber-700 font-medium
+                           transition-all duration-150 hover:shadow-sm flex-shrink-0
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RotateCcw className={`w-4 h-4 ${resettingStuck ? 'animate-spin' : ''}`} aria-hidden="true" />
+                {resettingStuck ? 'Resetting…' : 'Reset Stuck'}
+              </button>
+            )}
 
             {/* Refresh button */}
             <button

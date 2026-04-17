@@ -56,8 +56,14 @@ async def process_invoice(request: ProcessRequest, background_tasks: BackgroundT
 
     invoice = invoice_result.data[0]
 
-    if invoice['status'] not in ['uploaded', 'failed']:
-        raise HTTPException(status_code=400, detail="Invoice is already being processed or completed")
+    # Block reprocessing only while a pipeline is actively running.
+    # Completed, stuck, or failed states are all fair game for a new run.
+    ACTIVE_STATUSES = {'preprocessing', 'ocr_processing', 'extraction_processing'}
+    if invoice['status'] in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invoice is currently being processed (status: {invoice['status']}). Please wait."
+        )
 
     # Update status
     supabase.table('invoices').update({
@@ -458,6 +464,40 @@ async def _run_green_kpi_pipeline(
     except Exception as exc:
         green_kpi_svc.log_stage(gkpi_id, "store", "error", 0, {"error": str(exc)})
         green_kpi_svc.update_status(gkpi_id, "failed", str(exc))
+
+
+@router.post("/reset-stuck")
+async def reset_stuck_invoices():
+    """
+    Reset invoices that are stuck in a mid-pipeline status back to 'failed'
+    so they can be reprocessed.  This happens when the server is restarted
+    while background tasks are running.
+    """
+    supabase = get_supabase_admin()
+    STUCK_STATUSES = ['preprocessing', 'ocr_processing', 'extraction_processing']
+
+    stuck = (
+        supabase.table('invoices')
+        .select('id, status, original_filename')
+        .in_('status', STUCK_STATUSES)
+        .execute()
+        .data or []
+    )
+
+    if not stuck:
+        return {"reset": 0, "message": "No stuck invoices found"}
+
+    ids = [inv['id'] for inv in stuck]
+    supabase.table('invoices').update({
+        'status': 'failed',
+        'updated_at': datetime.utcnow().isoformat(),
+    }).in_('id', ids).execute()
+
+    return {
+        "reset": len(ids),
+        "message": f"Reset {len(ids)} stuck invoice(s) to 'failed'",
+        "invoices": [{"id": inv['id'], "filename": inv['original_filename'], "was": inv['status']} for inv in stuck],
+    }
 
 
 @router.get("/status/{invoice_id}")
