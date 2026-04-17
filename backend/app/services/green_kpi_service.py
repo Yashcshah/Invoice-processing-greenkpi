@@ -181,6 +181,71 @@ class GreenKPIService:
     # Dashboard stats
     # ------------------------------------------------------------------
 
+    def get_confidence_trend(self, days: int = 30) -> List[Dict[str, Any]]:
+        """
+        Return daily average confidence scores over the last `days` days.
+        Each entry: {date: "YYYY-MM-DD", avg_confidence: float, count: int}
+        Sorted oldest → newest (for a left-to-right line chart).
+        """
+        from datetime import timedelta
+
+        rows = (
+            self._sb.schema("green_kpi")
+            .table("invoices")
+            .select("id, created_at")
+            .order("created_at", desc=False)
+            .execute()
+            .data
+            or []
+        )
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        recent = [
+            r for r in rows
+            if r.get("created_at") and
+               datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= cutoff
+        ]
+
+        if not recent:
+            return []
+
+        # Batch-fetch confidence scores for those invoice ids
+        gkpi_ids = [r["id"] for r in recent]
+        data_rows = (
+            self._sb.schema("green_kpi")
+            .table("invoice_data")
+            .select("green_kpi_invoice_id, confidence_score")
+            .in_("green_kpi_invoice_id", gkpi_ids)
+            .execute()
+            .data
+            or []
+        )
+
+        score_by_id = {
+            d["green_kpi_invoice_id"]: float(d["confidence_score"])
+            for d in data_rows
+            if d.get("confidence_score") is not None
+        }
+
+        # Group by date
+        from collections import defaultdict
+        by_date: Dict[str, List[float]] = defaultdict(list)
+        for r in recent:
+            dt_str = r["created_at"][:10]          # "YYYY-MM-DD"
+            score  = score_by_id.get(r["id"])
+            if score is not None:
+                by_date[dt_str].append(score)
+
+        return [
+            {
+                "date":           date,
+                "avg_confidence": round(sum(scores) / len(scores) * 100, 1),
+                "count":          len(scores),
+            }
+            for date, scores in sorted(by_date.items())
+            if scores
+        ]
+
     def get_stats(self) -> Dict[str, Any]:
         """Aggregate stats across all green_kpi invoices."""
 

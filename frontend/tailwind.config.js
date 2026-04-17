@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+import { brandColors } from './src/styles/theme.js'
+
 export default {
   content: [
     "./index.html",
@@ -6,6 +8,9 @@ export default {
   ],
   theme: {
     extend: {
+      colors: {
+        brand: brandColors,
+      },
       animation: {
         'fade-in':       'fadeIn 0.4s ease-out both',
         'slide-up':      'slideUp 0.4s ease-out both',

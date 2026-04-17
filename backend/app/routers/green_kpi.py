@@ -63,6 +63,19 @@ async def green_kpi_stats():
         }
 
 
+@router.get("/confidence-trend")
+async def confidence_trend(days: int = 30):
+    """
+    Daily average extraction confidence for the last `days` days.
+    Returns [{date, avg_confidence, count}, ...] oldest → newest.
+    """
+    svc = get_green_kpi_service()
+    try:
+        return {"trend": svc.get_confidence_trend(days=days)}
+    except Exception as exc:
+        return {"trend": [], "_error": str(exc)}
+
+
 @router.get("/invoices")
 async def list_green_kpi_invoices(limit: int = 20, offset: int = 0):
     """List green_kpi invoices with sustainability summary."""
@@ -102,8 +115,19 @@ async def list_green_kpi_invoices(limit: int = 20, offset: int = 0):
 
 @router.get("/invoices/{invoice_id}")
 async def get_green_kpi_invoice(invoice_id: str):
-    """Full Green KPI detail for one source invoice."""
+    """
+    Full Green KPI detail for one source invoice.
+
+    Returns empty data (200) rather than 404/500 when:
+      • the invoice has not been pushed through the green_kpi pipeline yet, or
+      • the green_kpi schema/tables do not exist in this environment.
+
+    The frontend treats a null `data` field as "not yet processed" and hides
+    the Green KPI strip silently — no need for an error response here.
+    """
     sb = get_supabase_admin()
+    _empty = {"invoice": None, "data": None, "processing_stages": []}
+
     try:
         inv = (
             sb.schema("green_kpi")
@@ -113,9 +137,15 @@ async def get_green_kpi_invoice(invoice_id: str):
             .execute()
             .data
         )
-        if not inv:
-            raise HTTPException(status_code=404, detail="Green KPI record not found")
+    except Exception as exc:
+        # green_kpi schema or table missing — not an error the caller can act on
+        return {**_empty, "_error": str(exc)}
 
+    if not inv:
+        # Invoice exists in the main pipeline but hasn't been written to green_kpi yet
+        return _empty
+
+    try:
         gkpi_id = inv[0]["id"]
         data = (
             sb.schema("green_kpi")
@@ -137,12 +167,11 @@ async def get_green_kpi_invoice(invoice_id: str):
         return {
             "invoice": inv[0],
             "data": data[0] if data else None,
-            "processing_stages": logs,
+            "processing_stages": logs or [],
         }
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        # invoice_data / processing_logs query failed — return what we have
+        return {"invoice": inv[0], "data": None, "processing_stages": [], "_error": str(exc)}
 
 
 @router.post("/corrections")

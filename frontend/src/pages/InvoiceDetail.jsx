@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { StatusPill, ConfidenceBar, KpiChip, FieldConfidenceMiniChart } from '../components/ui'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import {
@@ -260,7 +261,7 @@ const cleanedLineItems = (lineItems || [])
 
   
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up">
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200">
       <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
         <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
         <p className="text-xs text-gray-400 mt-0.5">Click a value to edit it</p>
@@ -507,6 +508,491 @@ const cleanedLineItems = (lineItems || [])
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIELD SECTION CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIELD_SECTIONS = [
+  {
+    id:     'amounts',
+    title:  'Amounts',
+    fields: ['total_amount', 'subtotal', 'tax_amount'],
+    align:  'right',
+  },
+  {
+    id:     'details',
+    title:  'Invoice Details',
+    fields: ['invoice_number', 'invoice_date', 'due_date', 'billing_period', 'vendor_name'],
+    align:  'left',
+  },
+  {
+    id:     'customer',
+    title:  'Customer & Site',
+    fields: ['customer_name', 'site_name', 'supply_address', 'meter_id', 'abn'],
+    align:  'left',
+  },
+]
+
+const KNOWN_FIELDS = new Set(FIELD_SECTIONS.flatMap(s => s.fields))
+
+// ── Method pill helpers ───────────────────────────────────────────────────────
+
+const METHOD_STYLE = {
+  cluster_rule:   { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
+  agent_learned:  { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
+  llm_extraction: { label: 'llm',           cls: 'bg-blue-100   text-blue-700'   },
+  llm:            { label: 'llm',           cls: 'bg-blue-100   text-blue-700'   },
+  'llm+gnn':      { label: 'llm + gnn',     cls: 'bg-indigo-100 text-indigo-700' },
+  gnn:            { label: 'gnn',           cls: 'bg-indigo-100 text-indigo-700' },
+  row_label:      { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
+  summary_label:  { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
+  vendor_top:     { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
+  regex:          { label: 'regex',         cls: 'bg-gray-100   text-gray-500'   },
+  position_based: { label: 'position',      cls: 'bg-gray-100   text-gray-500'   },
+}
+
+function MethodPill({ method }) {
+  const cfg = METHOD_STYLE[method] ?? { label: method ?? '—', cls: 'bg-gray-100 text-gray-500' }
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold leading-tight ${cfg.cls}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
+// ── Inline edit controls ──────────────────────────────────────────────────────
+
+function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }) {
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <input
+        type="text"
+        value={editValue}
+        onChange={e => setEditValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter')  onSave(field)
+          if (e.key === 'Escape') onCancel()
+        }}
+        aria-label={`Edit ${field.field_name.replace(/_/g, ' ')}`}
+        className="flex-1 px-2.5 py-1 text-sm border border-blue-400 rounded-lg focus:outline-none field-edit-active min-w-0"
+        autoFocus
+      />
+      <button
+        onClick={() => onSave(field)}
+        disabled={saving}
+        title="Save"
+        aria-label="Save edit"
+        className="p-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex-shrink-0"
+      >
+        <Check className="w-3.5 h-3.5" />
+      </button>
+      <button
+        onClick={onCancel}
+        title="Cancel"
+        aria-label="Cancel edit"
+        className="p-1 border border-gray-200 text-gray-500 rounded-md hover:bg-gray-50 transition-colors flex-shrink-0"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+// ── Single field row ──────────────────────────────────────────────────────────
+
+function FieldRow({ field, align, editingFieldId, editValue, setEditValue, saving, onEdit, onSave, onCancel }) {
+  const isEditing = editingFieldId === field.id
+  const displayValue = field.validated_value ?? field.normalized_value ?? field.raw_value
+
+  return (
+    <div className="group py-2.5 first:pt-0 last:pb-0">
+      {/* Label + validated badge */}
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide leading-none">
+          {field.field_name.replace(/_/g, ' ')}
+        </span>
+        <div className="flex items-center gap-1">
+          {field.is_validated && (
+            <span
+              aria-label="Field has been validated"
+              className="flex items-center gap-0.5 text-[10px] text-emerald-600 font-semibold"
+            >
+              <CheckCircle className="w-3 h-3" aria-hidden="true" />
+              validated
+            </span>
+          )}
+          <MethodPill method={field.extraction_method} />
+        </div>
+      </div>
+
+      {/* Value */}
+      {isEditing ? (
+        <InlineEdit
+          field={field}
+          editValue={editValue}
+          setEditValue={setEditValue}
+          saving={saving}
+          onSave={onSave}
+          onCancel={onCancel}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => onEdit(field)}
+          aria-label={`Edit ${field.field_name.replace(/_/g, ' ')}: ${displayValue ?? 'empty'}`}
+          className={[
+            'w-full text-left rounded-lg px-2.5 py-1.5 transition-all duration-150',
+            'hover:ring-2 hover:ring-blue-200 hover:bg-white cursor-pointer',
+            'focus-visible:ring-2 focus-visible:ring-blue-400 outline-none',
+            align === 'right' ? 'text-right' : '',
+          ].join(' ')}
+        >
+          {displayValue ? (
+            <span className={`text-sm font-semibold text-gray-900 ${align === 'right' ? 'font-mono tabular-nums' : ''}`}>
+              {displayValue}
+            </span>
+          ) : (
+            <span className="text-xs text-gray-300 italic">not extracted</span>
+          )}
+        </button>
+      )}
+
+      {/* Confidence bar */}
+      {field.confidence_score != null && (
+        <ConfidenceBar
+          value={field.confidence_score}
+          showLabel
+          className="mt-1.5"
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Inline GST check ──────────────────────────────────────────────────────────
+
+function computeGstStatus(fields) {
+  const find = name => {
+    const f = fields.find(f => f.field_name === name)
+    return parseFloat((f?.validated_value ?? f?.normalized_value ?? f?.raw_value ?? '').replace(/[^0-9.]/g, '')) || null
+  }
+  const subtotal = find('subtotal')
+  const tax      = find('tax_amount')
+  const total    = find('total_amount')
+  if (!subtotal || !tax) return null
+  const expected = subtotal * 0.1
+  const ok = Math.abs(tax - expected) / expected < 0.05   // within 5 %
+  const hasRetention = fields.some(f =>
+    (f.validated_value ?? f.normalized_value ?? f.raw_value ?? '').toLowerCase().includes('retention')
+  )
+  return { ok, hasRetention }
+}
+
+// ── ExtractedFieldsPanel ──────────────────────────────────────────────────────
+
+function ExtractedFieldsPanel({
+  fields,
+  editingFieldId,
+  editValue,
+  setEditValue,
+  saving,
+  onEdit,
+  onSave,
+  onCancel,
+  canProcess,
+  isActivelyProcessing,
+  processing,
+  avgConfidence,
+  greenKpiData,
+  greenKpiLoading,
+}) {
+  if (!fields.length) {
+    return (
+      <div
+        className="bg-white rounded-xl shadow-sm p-6 flex flex-col items-center justify-center text-center"
+        style={{ minHeight: '220px' }}
+        aria-label="Extracted fields — empty"
+      >
+        <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center mb-3">
+          <FileText className="w-6 h-6 text-blue-300 animate-float" aria-hidden="true" />
+        </div>
+        <p className="text-sm font-medium text-gray-500">
+          {canProcess
+            ? 'Click "Process Invoice" to extract fields'
+            : isActivelyProcessing || processing
+            ? 'Extracting fields…'
+            : 'No extracted fields yet'}
+        </p>
+      </div>
+    )
+  }
+
+  // Build section → field lookup
+  const byName = Object.fromEntries(fields.map(f => [f.field_name, f]))
+  const otherFields = fields.filter(f => !KNOWN_FIELDS.has(f.field_name))
+
+  const gst = computeGstStatus(fields)
+
+  const sharedRowProps = { editingFieldId, editValue, setEditValue, saving, onEdit, onSave, onCancel }
+
+  return (
+    <aside
+      className="bg-white rounded-xl shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
+      style={{ animationDelay: '0.05s' }}
+      aria-label="Extracted fields panel"
+    >
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-gray-900">Extracted Fields</h2>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            Tap any value to edit &amp; validate
+          </p>
+        </div>
+        {avgConfidence !== null && (
+          <div className="text-right flex-shrink-0 ml-3">
+            <p className="text-base font-bold text-blue-600 leading-none tabular-nums">
+              {avgConfidence}%
+            </p>
+            <p className="text-[10px] text-gray-400">avg conf.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Mini overall confidence bar */}
+      {avgConfidence !== null && (
+        <div className="px-4 pt-3 pb-1">
+          <ConfidenceBar value={avgConfidence / 100} showLabel={false} className="w-full" />
+        </div>
+      )}
+
+      {/* Field sections */}
+      <div className="px-4 pb-3 divide-y divide-gray-100">
+        {FIELD_SECTIONS.map(section => {
+          const sectionFields = section.fields
+            .map(name => byName[name])
+            .filter(Boolean)
+          if (!sectionFields.length) return null
+
+          return (
+            <div key={section.id} className="py-3 first:pt-2">
+              <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
+                {section.title}
+              </p>
+              <div className="divide-y divide-gray-50">
+                {sectionFields.map(field => (
+                  <FieldRow
+                    key={field.id}
+                    field={field}
+                    align={section.align}
+                    {...sharedRowProps}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
+
+        {/* Other / uncategorised fields */}
+        {otherFields.length > 0 && (
+          <div className="py-3">
+            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
+              Other
+            </p>
+            <div className="divide-y divide-gray-50">
+              {otherFields.map(field => (
+                <FieldRow
+                  key={field.id}
+                  field={field}
+                  align="left"
+                  {...sharedRowProps}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Per-field confidence mini chart */}
+      {fields.some(f => f.confidence_score != null) && (
+        <div className="px-4 pt-2 pb-3 border-t border-gray-100">
+          <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
+            Field Confidence
+          </p>
+          <FieldConfidenceMiniChart fields={fields} height={Math.max(28 * 4, 120)} />
+        </div>
+      )}
+
+      {/* KPI strip */}
+      {gst !== null && (
+        <div
+          className="px-4 py-3 border-t border-gray-100 bg-gray-50/50 flex flex-wrap gap-1.5"
+          aria-label="Compliance flags"
+        >
+          <KpiChip type={gst.ok ? 'gst_ok' : 'gst_issue'} />
+          {gst.hasRetention && <KpiChip type="retention_clause" />}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+// ── OCR collapsible ───────────────────────────────────────────────────────────
+
+function OcrCollapsible({ ocrResults }) {
+  const [open, setOpen] = useState(false)
+
+  if (!ocrResults?.length) return null
+
+  const result   = ocrResults[0]
+  const engine   = result.ocr_engine ?? 'OCR'
+  const confPct  = result.confidence_score != null
+    ? `${Math.round(result.confidence_score * 100)}% confidence`
+    : null
+  const timing   = result.processing_time_ms != null
+    ? `${result.processing_time_ms}ms`
+    : null
+
+  const meta = [engine, confPct, timing].filter(Boolean).join(' · ')
+
+  return (
+    <div
+      className="bg-white rounded-2xl border border-gray-200 shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200"
+      style={{ animationDelay: '0.3s' }}
+    >
+      {/* ── Header / toggle button ── */}
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        aria-controls="ocr-body"
+        className="w-full px-6 py-4 flex items-center justify-between
+                   hover:bg-gray-50 transition-colors duration-150 rounded-2xl
+                   focus-visible:ring-2 focus-visible:ring-blue-400 outline-none"
+      >
+        <div className="text-left">
+          <h2 className="text-base font-bold text-gray-900">OCR Raw Text</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{meta}</p>
+        </div>
+
+        <ChevronDown
+          aria-hidden="true"
+          className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {/* ── Collapsible body — grid-rows trick gives smooth height animation ── */}
+      <div
+        id="ocr-body"
+        className={`grid transition-all duration-300 ease-in-out ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-6 pb-6 pt-1 border-t border-gray-100">
+            <pre
+              className="mt-3 text-sm text-gray-700 whitespace-pre-wrap font-mono
+                         bg-gray-50 rounded-lg p-3 max-h-[300px] overflow-auto
+                         leading-relaxed"
+            >
+              {result.raw_text || 'No text extracted'}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Green KPI strip ───────────────────────────────────────────────────────────
+
+// Sustainability tag types that map directly to KpiChip types
+const SUSTAIN_TAG_TYPES = new Set([
+  'solar', 'carbon_offset', 'renewable_energy', 'recycled_materials', 'energy_efficiency',
+])
+
+function GreenKpiStrip({ data, loading }) {
+  if (loading) {
+    return (
+      <div className="h-14 rounded-xl shimmer-bg" aria-hidden="true" />
+    )
+  }
+
+  if (!data) return null
+
+  const flags    = data.compliance_flags   ?? {}
+  const tags     = data.sustainability_tags ?? []
+
+  // Build ordered chip list
+  const chips = []
+
+  // GST compliance chip
+  if (flags.gst_valid != null) {
+    chips.push(<KpiChip key="gst" type={flags.gst_valid ? 'gst_ok' : 'gst_issue'} />)
+  }
+
+  // QBCC chip (only when QBCC keywords detected)
+  if (flags.qbcc_detected) {
+    chips.push(<KpiChip key="qbcc" type="qbcc_missing" />)
+  }
+
+  // Retention clause chip
+  if (flags.retention_detected) {
+    chips.push(<KpiChip key="retention" type="retention_clause" />)
+  }
+
+  // Sustainability tags — map known ones to KpiChip types, unknown ones as plain pills
+  tags.forEach((tag, i) => {
+    const type = SUSTAIN_TAG_TYPES.has(tag) ? tag : null
+    if (type) {
+      chips.push(<KpiChip key={`tag-${i}`} type={type} />)
+    } else {
+      chips.push(
+        <span
+          key={`tag-${i}`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 text-xs font-semibold border border-teal-100"
+        >
+          {tag.replace(/_/g, ' ')}
+        </span>
+      )
+    }
+  })
+
+  if (!chips.length) return null
+
+  // Summary text
+  const tagCount   = tags.length
+  const gstLabel   = flags.gst_valid == null ? '' : flags.gst_valid ? 'GST OK' : 'GST Issue'
+  const summaryParts = []
+  if (tagCount > 0) summaryParts.push(`${tagCount} green tag${tagCount !== 1 ? 's' : ''}`)
+  if (gstLabel)     summaryParts.push(gstLabel)
+  const summary = summaryParts.join(' · ')
+
+  return (
+    <div
+      className="bg-white rounded-xl shadow-sm px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 animate-slide-up hover:shadow-md transition-shadow duration-200"
+      role="region"
+      aria-label="Green KPI snapshot"
+    >
+      {/* Left: title */}
+      <div className="flex-shrink-0">
+        <p className="text-xs font-bold text-gray-700 leading-none">Green KPI</p>
+        <p className="text-[10px] text-gray-400 mt-0.5">Compliance &amp; sustainability</p>
+      </div>
+
+      {/* Centre: chips */}
+      <div className="flex flex-wrap gap-1.5 flex-1">
+        {chips}
+      </div>
+
+      {/* Right: summary text */}
+      {summary && (
+        <p className="text-[11px] text-gray-400 font-medium flex-shrink-0 whitespace-nowrap">
+          {summary}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function InvoiceDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -517,7 +1003,6 @@ export default function InvoiceDetail() {
   const [lineItems, setLineItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [showRawText, setShowRawText] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [processError, setProcessError] = useState(null)
   const [exportingPdf, setExportingPdf] = useState(false)
@@ -526,29 +1011,37 @@ export default function InvoiceDetail() {
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const [greenKpiData, setGreenKpiData] = useState(null)
+  const [greenKpiLoading, setGreenKpiLoading] = useState(false)
+
   const [folders, setFolders] = useState([])
   const [assigningFolder, setAssigningFolder] = useState(false)
 
   const [mounted, setMounted] = useState(false)
   const [confidenceWidths, setConfidenceWidths] = useState({})
 
-<<<<<<< Updated upstream
-  const pollRef = useRef(null)
-  const previewRef = useRef(null)
-=======
   const channelRef = useRef(null)
->>>>>>> Stashed changes
+  const previewRef = useRef(null)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  const fetchGreenKpi = async () => {
+    setGreenKpiLoading(true)
+    try {
+      const res = await axios.get(`/api/green-kpi/invoices/${id}`)
+      setGreenKpiData(res.data?.data ?? res.data ?? null)
+    } catch {
+      // Silently skip — green KPI is non-critical
+    } finally {
+      setGreenKpiLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetchData()
-<<<<<<< Updated upstream
-    axios.get('/api/folders').then((res) => setFolders(res.data.folders)).catch(() => {})
-    return () => clearInterval(pollRef.current)
-=======
+    fetchGreenKpi()
     axios.get('/api/folders').then(res => setFolders(res.data.folders)).catch(() => {})
     return () => {
       const ref = channelRef.current
@@ -560,7 +1053,6 @@ export default function InvoiceDetail() {
       }
       channelRef.current = null
     }
->>>>>>> Stashed changes
   }, [id])
 
   useEffect(() => {
@@ -787,6 +1279,29 @@ export default function InvoiceDetail() {
   const currentStepIdx = STEP_ORDER.indexOf(invoice?.status ?? '')
   const ocrText = ocrResults[0]?.raw_text || ''
 
+  // Average confidence across all extracted fields (0–100 %)
+  const avgConfidence = (() => {
+    const scores = extractedFields
+      .map(f => f.confidence_score)
+      .filter(s => s != null && !Number.isNaN(Number(s)))
+    if (!scores.length) return null
+    return Math.round(scores.reduce((a, b) => a + Number(b), 0) / scores.length * 100)
+  })()
+
+  // Human-readable file metadata string
+  const fileMeta = [
+    invoice?.file_type?.toUpperCase() || 'FILE',
+    invoice?.file_size_bytes
+      ? `${(invoice.file_size_bytes / 1024).toFixed(0)} KB`
+      : null,
+    invoice?.created_at
+      ? `Uploaded ${new Date(invoice.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+      : null,
+    invoice?.processed_at
+      ? `Processed ${new Date(invoice.processed_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`
+      : null,
+  ].filter(Boolean).join(' · ')
+
   if (loading) {
     return (
       <div className="space-y-6 animate-fade-in">
@@ -827,82 +1342,140 @@ export default function InvoiceDetail() {
           Back to Invoices
         </button>
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 bg-blue-50 rounded-xl mt-0.5">
-                <FileText className="w-6 h-6 text-blue-600" />
-              </div>
+        {/* ── Summary bar ───────────────────────────────────────────────── */}
+        <div
+          className="bg-white shadow-sm rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 hover:shadow-md transition-shadow duration-200"
+          role="region"
+          aria-label="Invoice summary"
+        >
 
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">{invoice?.original_filename}</h1>
-                <p className="text-sm text-gray-400 mt-0.5">
-                  {invoice?.file_type?.toUpperCase()}
-                  {invoice?.file_size_bytes ? ` · ${(invoice.file_size_bytes / 1024 / 1024).toFixed(2)} MB` : ''}
-                  {invoice?.created_at ? ` · Uploaded ${new Date(invoice.created_at).toLocaleDateString()}` : ''}
-                  {invoice?.processed_at ? ` · Processed ${new Date(invoice.processed_at).toLocaleDateString()}` : ''}
-                </p>
-              </div>
+          {/* ── LEFT: file identity ───────────────────────────────── */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              aria-hidden="true"
+              className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0"
+            >
+              <FileText className="w-5 h-5 text-blue-600" />
             </div>
-
-            <div className="flex items-center gap-3 flex-shrink-0 flex-wrap justify-end">
-              <button
-                onClick={exportPreviewAsPdf}
-                disabled={exportingPdf || (!hasFields && !hasLineItems)}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium"
+            <div className="min-w-0">
+              <h1
+                className="text-base font-bold text-gray-900 truncate"
+                title={invoice?.original_filename}
               >
-                <Download className="w-4 h-4" />
-                {exportingPdf ? 'Exporting…' : 'Export PDF'}
-              </button>
-
-              <span
-                className={`
-                  inline-flex px-3 py-1 rounded-full text-sm font-semibold
-                  ${STATUS_STYLES[invoice?.status] || 'bg-gray-100 text-gray-700'}
-                  ${isActivelyProcessing ? 'status-ring animate-pulse-ring' : ''}
-                `}
-              >
-                {invoice?.status?.replace(/_/g, ' ')}
-              </span>
-
-              {(canProcess || isActivelyProcessing || processing) && (
-                <button
-                  onClick={processInvoice}
-                  disabled={processing || isActivelyProcessing}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
-                >
-                  <RefreshCw className={`w-4 h-4 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`} />
-                  {processing || isActivelyProcessing ? 'Processing…' : 'Process Invoice'}
-                </button>
-              )}
-
-              {!canProcess && !isActivelyProcessing && !processing && hasOcr && (
-                <button
-                  onClick={processInvoice}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all duration-200 text-sm"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  Reprocess
-                </button>
-              )}
+                {invoice?.original_filename}
+              </h1>
+              <p className="text-xs text-gray-400 mt-0.5 truncate" title={fileMeta}>
+                {fileMeta}
+              </p>
             </div>
           </div>
 
-          {processError && (
-            <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm animate-slide-up">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              {processError}
-            </div>
-          )}
+          {/* ── CENTER: status ────────────────────────────────────── */}
+          <div className="flex items-center justify-start sm:justify-center flex-shrink-0">
+            <StatusPill status={invoice?.status} />
+          </div>
 
-          {(processing || isActivelyProcessing) && (
-            <div className="mt-5 pt-5 border-t border-gray-100 animate-slide-up">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Progress</p>
+          {/* ── RIGHT: confidence chip + action buttons ───────────── */}
+          <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end flex-shrink-0">
 
-              <div className="flex items-center gap-0">
-                {STEPS.map((step, i) => {
-                  const done = currentStepIdx >= i
-                  const active = currentStepIdx === i - 1
+            {/* Avg confidence chip */}
+            {avgConfidence !== null && (
+              <span
+                aria-label={`Average extraction confidence: ${avgConfidence}%`}
+                className={[
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border select-none',
+                  avgConfidence >= 80
+                    ? 'bg-green-50  text-green-700  border-green-200'
+                    : avgConfidence >= 55
+                    ? 'bg-blue-50   text-blue-700   border-blue-200'
+                    : 'bg-orange-50 text-orange-700 border-orange-200',
+                ].join(' ')}
+              >
+                <span
+                  aria-hidden="true"
+                  className={[
+                    'w-1.5 h-1.5 rounded-full',
+                    avgConfidence >= 80 ? 'bg-green-500'
+                    : avgConfidence >= 55 ? 'bg-blue-500'
+                    : 'bg-orange-500',
+                  ].join(' ')}
+                />
+                Avg confidence {avgConfidence}%
+              </span>
+            )}
+
+            {/* Export PDF */}
+            <button
+              onClick={exportPreviewAsPdf}
+              disabled={exportingPdf || (!hasFields && !hasLineItems)}
+              aria-label={exportingPdf ? 'Exporting PDF…' : 'Export invoice as PDF'}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                         border border-gray-200 text-gray-700 rounded-xl bg-white
+                         hover:bg-gray-50 hover:scale-[1.02] active:scale-[0.98]
+                         disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
+                         transition-all duration-150 focus-visible:ring-2 focus-visible:ring-blue-400"
+            >
+              <Download className="w-3.5 h-3.5" aria-hidden="true" />
+              {exportingPdf ? 'Exporting…' : 'Export PDF'}
+            </button>
+
+            {/* Process / Reprocess */}
+            {(canProcess || isActivelyProcessing || processing) ? (
+              <button
+                onClick={processInvoice}
+                disabled={processing || isActivelyProcessing}
+                aria-label={processing || isActivelyProcessing ? 'Processing invoice…' : 'Run AI processing pipeline'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                           bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl
+                           hover:from-blue-700 hover:to-indigo-700
+                           disabled:opacity-50 disabled:cursor-not-allowed
+                           transition-all duration-150 shadow-sm hover:shadow-md
+                           hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]
+                           focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                {processing || isActivelyProcessing ? 'Processing…' : 'Process Invoice'}
+              </button>
+            ) : hasOcr ? (
+              <button
+                onClick={processInvoice}
+                aria-label="Reprocess invoice through the AI pipeline"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                           border border-gray-200 text-gray-600 rounded-xl bg-white
+                           hover:bg-gray-50 hover:scale-[1.02] active:scale-[0.98]
+                           transition-all duration-150
+                           focus-visible:ring-2 focus-visible:ring-blue-400"
+              >
+                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                Reprocess
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* ── Process error banner ──────────────────────────────────────── */}
+        {processError && (
+          <div
+            role="alert"
+            className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm animate-slide-up"
+          >
+            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+            {processError}
+          </div>
+        )}
+
+        {/* ── Progress stepper (visible while pipeline is running) ─────── */}
+        {(processing || isActivelyProcessing) && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 animate-slide-up">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Pipeline progress</p>
+
+            <div className="flex items-center gap-0">
+              {STEPS.map((step, i) => {
+                const done = currentStepIdx >= i
+                const active = currentStepIdx === i - 1
                   const isLast = i === STEPS.length - 1
 
                   return (
@@ -941,9 +1514,8 @@ export default function InvoiceDetail() {
                   )
                 })}
               </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {suggestedFolder && !invoice?.folder_id && (
@@ -986,141 +1558,78 @@ export default function InvoiceDetail() {
         </div>
       )}
 
-      {(hasFields || hasLineItems) && (
-      <InvoicePreviewCard
-  extractedFields={extractedFields}
-  lineItems={lineItems}
-  invoice={invoice}
-  previewRef={previewRef}
-  onEditField={startEditField}
-/>
-      )}
+      {/* ═══════════════════════════════════════════════════════════
+          TWO-COLUMN GRID
+          col-span-2 → Invoice Preview   col-span-1 → Extracted Fields
+          ─────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
 
-      <div
-        className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up"
-        style={{ animationDelay: '0.1s' }}
-      >
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
-          <h2 className="text-base font-bold text-gray-900">Extracted Fields</h2>
-          {hasFields && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              Click <Edit2 className="w-3 h-3 inline" /> to edit and validate a value
-            </p>
-          )}
+        {/* ── LEFT col (2/3): Invoice Preview ───────────────────── */}
+        <div className="md:col-span-2 flex flex-col gap-2">
+
+          {/* Helper hint */}
+          <p className="text-xs text-gray-400 flex items-center gap-1.5">
+            <Edit2 className="w-3 h-3 text-blue-400" aria-hidden="true" />
+            Click any highlighted value to edit
+          </p>
+
+          {/* Preview card */}
+          <div
+            className="bg-blue-50 rounded-xl shadow-sm p-4 overflow-auto"
+            style={{ maxHeight: '72vh' }}
+            aria-label="Invoice preview"
+          >
+            {(hasFields || hasLineItems) ? (
+              <InvoicePreviewCard
+                extractedFields={extractedFields}
+                lineItems={lineItems}
+                invoice={invoice}
+                previewRef={previewRef}
+                onEditField={startEditField}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center mx-auto mb-3">
+                  <FileText className="w-7 h-7 text-blue-300 animate-float" aria-hidden="true" />
+                </div>
+                <p className="text-sm text-gray-500 font-medium">No preview yet</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {canProcess ? 'Click "Process Invoice" to extract data' : 'Process the invoice to generate a preview'}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
-        {hasFields ? (
-          <div className="divide-y divide-gray-100">
-            {extractedFields.map((field, i) => (
-              <div
-                key={field.id}
-                style={{ animationDelay: `${i * 50}ms` }}
-                className="animate-slide-up card-hover px-6 py-3.5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4"
-              >
-                <div className="w-44 flex-shrink-0">
-                  <span className="text-sm font-semibold text-gray-600 capitalize">
-                    {field.field_name.replace(/_/g, ' ')}
-                  </span>
-                </div>
-
-                <div className="flex-1">
-                  {editingFieldId === field.id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveField(field)
-                          if (e.key === 'Escape') cancelEdit()
-                        }}
-                        className="flex-1 px-3 py-1.5 text-sm border border-blue-400 rounded-xl focus:outline-none field-edit-active"
-                        autoFocus
-                      />
-                      <button
-                        onClick={() => saveField(field)}
-                        disabled={saving}
-                        className="p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors animate-slide-in-right"
-                        title="Save"
-                      >
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={cancelEdit}
-                        className="p-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 transition-colors animate-slide-in-right"
-                        style={{ animationDelay: '40ms' }}
-                        title="Cancel"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between gap-3 group/field">
-                      <span className="text-sm text-gray-900 break-words flex-1">
-                        {field.validated_value ?? field.normalized_value ?? field.raw_value ?? (
-                          <span className="text-gray-400 italic">not extracted</span>
-                        )}
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => startEditField(field)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors text-xs font-medium"
-                        title="Edit value"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        Edit
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <div className="flex items-center gap-2">
-                    <div className="confidence-bar-track w-16">
-                      <div
-                        className="confidence-bar-fill"
-                        style={{ width: confidenceWidths[field.id] || '0%' }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-400 w-8 text-right">
-                      {Math.round((field.confidence_score ?? 0) * 100)}%
-                    </span>
-                  </div>
-
-                  {field.is_validated && (
-                    <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      validated
-                    </span>
-                  )}
-
-                  <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">
-                    {field.extraction_method}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-12 animate-fade-in">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-3">
-              <FileText className="w-7 h-7 text-blue-300 animate-float" />
-            </div>
-            <p className="text-sm text-gray-500">
-              {canProcess
-                ? 'Click "Process Invoice" to extract fields'
-                : isActivelyProcessing || processing
-                ? 'Extracting fields…'
-                : 'No extracted fields yet'}
-            </p>
-          </div>
-        )}
+        {/* ── RIGHT col (1/3): Extracted Fields ─────────────────── */}
+        <div className="md:col-span-1">
+          <ExtractedFieldsPanel
+            fields={extractedFields}
+            editingFieldId={editingFieldId}
+            editValue={editValue}
+            setEditValue={setEditValue}
+            saving={saving}
+            onEdit={startEditField}
+            onSave={saveField}
+            onCancel={cancelEdit}
+            canProcess={canProcess}
+            isActivelyProcessing={isActivelyProcessing}
+            processing={processing}
+            avgConfidence={avgConfidence}
+            greenKpiData={greenKpiData}
+            greenKpiLoading={greenKpiLoading}
+          />
+        </div>
       </div>
+
+      {/* ── Green KPI Strip (full width, below the preview + fields grid) ──── */}
+      {(greenKpiLoading || greenKpiData) && (
+        <GreenKpiStrip data={greenKpiData} loading={greenKpiLoading} />
+      )}
 
       {hasLineItems && (
         <div
-          className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up"
+          className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200"
           style={{ animationDelay: '0.2s' }}
         >
           <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
@@ -1166,41 +1675,7 @@ export default function InvoiceDetail() {
         </div>
       )}
 
-      {hasOcr && (
-        <div
-          className="bg-white rounded-2xl border border-gray-200 shadow-sm animate-slide-up"
-          style={{ animationDelay: '0.3s' }}
-        >
-          <button
-            onClick={() => setShowRawText(!showRawText)}
-            className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors rounded-2xl"
-          >
-            <div className="text-left">
-              <h2 className="text-base font-bold text-gray-900">OCR Raw Text</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                {ocrResults[0]?.ocr_engine}
-                {ocrResults[0]?.confidence_score != null ? ` · ${Math.round(ocrResults[0].confidence_score * 100)}% confidence` : ''}
-                {ocrResults[0]?.processing_time_ms != null ? ` · ${ocrResults[0].processing_time_ms}ms` : ''}
-              </p>
-            </div>
-
-            <ChevronDown
-              className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform duration-300 ${showRawText ? 'rotate-180' : ''}`}
-            />
-          </button>
-
-          <div
-            className={`collapse-transition ${showRawText ? 'expanded' : 'collapsed'}`}
-            style={{ maxHeight: showRawText ? '500px' : undefined }}
-          >
-            <div className="px-6 pb-6 border-t border-gray-100">
-              <pre className="mt-4 text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-xl max-h-80 overflow-y-auto leading-relaxed">
-                {ocrResults[0]?.raw_text || 'No text extracted'}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
+      {hasOcr && <OcrCollapsible ocrResults={ocrResults} />}
     </div>
   )
 }
