@@ -7,7 +7,7 @@
  *
  * Usage:
  *   <StatusPill status="processing" />
- *   <StatusPill status="completed" />
+ *   <StatusPill status="completed" />          // or extraction_complete / validated / exported
  *   <StatusPill status="needs_review" />
  *   <StatusPill status="failed" />
  *
@@ -46,7 +46,7 @@ const STATUS_CONFIG = {
 function resolveStatus(raw) {
   if (!raw) return 'processing'
   const s = raw.toLowerCase()
-  if (s === 'completed' || s === 'complete') return 'completed'
+  if (s === 'completed' || s === 'complete' || s === 'extraction_complete' || s === 'validated' || s === 'exported') return 'completed'
   if (s === 'failed' || s === 'error')       return 'failed'
   if (s === 'needs_review')                  return 'needs_review'
   // Any in-progress state maps to processing
