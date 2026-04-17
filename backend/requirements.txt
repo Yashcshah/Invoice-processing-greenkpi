@@ -16,7 +16,7 @@ Pillow>=10.4.0
 opencv-python>=4.10.0
 numpy>=2.0.0
 
-# ML Utilities (spacy removed: Sprint 4 feature, not yet implemented)
+# ML Utilities
 scikit-learn>=1.5.0
 pandas>=2.2.2
 
@@ -27,3 +27,18 @@ pydantic-settings>=2.5.0
 
 # For PDF processing
 PyMuPDF>=1.24.0
+
+# ── Green KPI / LLM ───────────────────────────────────────────────────────────
+# Gemini multimodal LLM (optional — set GEMINI_API_KEY in .env to activate)
+google-generativeai>=0.8.0
+
+# ── Green KPI / GNN (optional — install for full GAT mode) ───────────────────
+# Without these, the system runs in lite mode (heuristic graph features).
+# Install order matters for torch-geometric on Windows:
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install torch-geometric
+#
+# Then uncomment the lines below so pip install -r requirements.txt includes them:
+# torch>=2.0.0
+# torch-geometric

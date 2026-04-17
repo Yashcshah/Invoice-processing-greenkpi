@@ -6,10 +6,18 @@ import tempfile
 import traceback
 from datetime import datetime
 
+from app.config import get_settings
 from app.services.supabase_client import get_supabase_admin
 from app.services.preprocessing_service import get_preprocessing_service
 from app.services.ocr_service import get_ocr_service
 from app.services.extraction_service import get_extraction_service
+from app.services.agent_manager import get_agent_manager
+from app.services.learning_service import get_learning_service
+from app.services.llm_service import get_llm_service
+from app.services.graph_builder import get_graph_builder
+from app.services.gnn_service import get_gnn_service
+from app.services.validation_service import get_validation_service
+from app.services.green_kpi_service import get_green_kpi_service
 
 router = APIRouter()
 
@@ -84,6 +92,11 @@ async def run_processing_pipeline(
     """Run the full processing pipeline"""
     supabase = get_supabase_admin()
     
+    # Initialize variables so Green KPI stage can always reference them
+    fields: dict = {}
+    line_items: list = []
+    ocr_result = None
+
     try:
         # Download file from storage
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_path)[1]) as tmp:
@@ -125,7 +138,6 @@ async def run_processing_pipeline(
                 supabase.table('invoices').update({'status': 'preprocessed'}).eq('id', invoice_id).execute()
         
         # Step 2: OCR
-        ocr_result = None
         if not skip_ocr:
             supabase.table('invoices').update({'status': 'ocr_processing'}).eq('id', invoice_id).execute()
             
@@ -164,14 +176,25 @@ async def run_processing_pipeline(
         # Step 3: Field Extraction
         if not skip_extraction and ocr_result:
             supabase.table('invoices').update({'status': 'extraction_processing'}).eq('id', invoice_id).execute()
-            
+
+            # --- ML agent: get cluster + learned patterns for this invoice ---
+            agent_manager = get_agent_manager()
+            agent_context = await agent_manager.get_agent_context(ocr_result['raw_text'])
+            cluster_id = agent_context.get('cluster_id')  # may be None if not yet trained
+
             extractor = get_extraction_service()
+            # Load cluster-specific DB rules on top of defaults (fixes disconnection gap)
+            extractor.load_db_rules(cluster_id=cluster_id)
+
             fields = extractor.extract_fields(
                 ocr_result['raw_text'],
                 ocr_result.get('word_boxes', [])
             )
-            
-            # Save extracted fields
+
+            # Apply cluster agent's learned corrections (no-op if not trained yet)
+            fields = agent_manager.apply_learned_patterns(fields, agent_context)
+
+            # Save extracted fields — include rule_id for traceability
             for field_name, field_data in fields.items():
                 supabase.table('extracted_fields').insert({
                     'invoice_id': invoice_id,
@@ -180,6 +203,7 @@ async def run_processing_pipeline(
                     'normalized_value': field_data['normalized_value'],
                     'extraction_method': field_data['extraction_method'],
                     'confidence_score': field_data['confidence_score'],
+                    'rule_id': field_data.get('rule_id'),  # NULL for LLM/GNN-sourced fields
                 }).execute()
             
             # Extract line items
@@ -216,6 +240,27 @@ async def run_processing_pipeline(
                 supabase.table('invoices').update(folder_update).eq('id', invoice_id).execute()
 
             supabase.table('invoices').update({'status': 'extraction_complete'}).eq('id', invoice_id).execute()
+
+            # --- ML agent: persist cluster assignment for this invoice ---
+            try:
+                learning = get_learning_service()
+                await learning.assign_invoice_to_cluster(invoice_id, ocr_result['raw_text'])
+            except Exception:
+                pass  # cluster assignment is non-critical; never block the pipeline
+
+        # ── Green KPI pipeline ────────────────────────────────────────────
+        # All stages are non-blocking — errors are logged but never fail the invoice
+        settings_obj = get_settings()
+        if settings_obj.green_kpi_enabled and ocr_result:
+            await _run_green_kpi_pipeline(
+                invoice_id=invoice_id,
+                file_path=file_path,
+                local_path=processed_path,
+                ocr_result=ocr_result,
+                extracted_fields=fields if not skip_extraction else {},
+                extracted_line_items=line_items if not skip_extraction else [],
+                supabase=supabase,
+            )
 
         # Mark as complete
         supabase.table('invoices').update({
@@ -263,6 +308,156 @@ async def run_processing_pipeline(
                 os.unlink(processed_path)
         except:
             pass
+
+
+async def _run_green_kpi_pipeline(
+    invoice_id: str,
+    file_path: str,
+    local_path: str,
+    ocr_result: dict,
+    extracted_fields: dict,
+    extracted_line_items: list,
+    supabase,
+) -> None:
+    """
+    Green KPI pipeline: LLM → Graph → GNN → Validate → Store
+    Runs after the core extraction pipeline. All stages are try/except wrapped.
+    """
+    import time as _time
+    settings_obj = get_settings()
+
+    # Get uploaded_by for the invoice
+    inv_row = supabase.table('invoices').select('uploaded_by').eq('id', invoice_id).execute().data
+    uploaded_by = inv_row[0]['uploaded_by'] if inv_row else None
+
+    green_kpi_svc = get_green_kpi_service()
+
+    # Create / retrieve green_kpi.invoices record
+    try:
+        gkpi_id = green_kpi_svc.create_invoice_record(
+            source_invoice_id=invoice_id,
+            uploaded_by=uploaded_by,
+            file_path=file_path,
+        )
+    except Exception as exc:
+        print(f"[GreenKPI] Could not create invoice record: {exc}")
+        return
+
+    # ── Stage 1: LLM encode ──────────────────────────────────────────────
+    llm_output = {}
+    if settings_obj.llm_enabled:
+        t0 = _time.time()
+        try:
+            green_kpi_svc.update_status(gkpi_id, "llm_processed")
+            llm_svc = get_llm_service()
+            llm_output = await llm_svc.encode_invoice(
+                image_path=local_path if not local_path.endswith('.pdf') else None,
+                ocr_text=ocr_result.get('raw_text', ''),
+                word_boxes=ocr_result.get('word_boxes', []),
+            )
+            dur = int((_time.time() - t0) * 1000)
+            green_kpi_svc.log_stage(gkpi_id, "llm", "ok" if not llm_output.get("skipped") else "skipped", dur,
+                                    {"skip_reason": llm_output.get("skip_reason")})
+
+            # Merge LLM fields on top of regex fields (LLM wins where available)
+            for fname, fdata in llm_output.get("fields", {}).items():
+                if fname not in extracted_fields or \
+                        fdata.get("confidence_score", 0) > extracted_fields[fname].get("confidence_score", 0):
+                    extracted_fields[fname] = fdata
+        except Exception as exc:
+            green_kpi_svc.log_stage(gkpi_id, "llm", "error", 0, {"error": str(exc)})
+
+    # ── Stage 2: Graph construction ──────────────────────────────────────
+    graph_data = {}
+    t0 = _time.time()
+    try:
+        green_kpi_svc.update_status(gkpi_id, "graph_built")
+        builder = get_graph_builder()
+        graph_data = builder.build(
+            word_boxes=ocr_result.get('word_boxes', []),
+            llm_output=llm_output,
+        )
+        dur = int((_time.time() - t0) * 1000)
+        green_kpi_svc.log_stage(gkpi_id, "graph", "ok", dur,
+                                {"n_nodes": graph_data.get("n_nodes"), "n_edges": graph_data.get("n_edges")})
+    except Exception as exc:
+        green_kpi_svc.log_stage(gkpi_id, "graph", "error", 0, {"error": str(exc)})
+
+    # ── Stage 3: GNN reasoning ───────────────────────────────────────────
+    graph_embedding = []
+    if settings_obj.gnn_enabled:
+        t0 = _time.time()
+        try:
+            green_kpi_svc.update_status(gkpi_id, "gnn_processed")
+            gnn_svc = get_gnn_service()
+            gnn_result = gnn_svc.infer(graph_data, extracted_fields)
+            extracted_fields = gnn_result["fields"]
+            graph_embedding = gnn_result.get("graph_embedding", [])
+            dur = int((_time.time() - t0) * 1000)
+            green_kpi_svc.log_stage(gkpi_id, "gnn", "ok", dur, {"mode": gnn_result.get("mode")})
+        except Exception as exc:
+            green_kpi_svc.log_stage(gkpi_id, "gnn", "error", 0, {"error": str(exc)})
+
+    # ── Stage 4: Validation + sustainability ─────────────────────────────
+    validation_result = {
+        "fields": extracted_fields,
+        "sustainability_tags": [],
+        "compliance_flags": {},
+        "processing_status": "completed",
+        "validation_notes": [],
+    }
+    t0 = _time.time()
+    try:
+        green_kpi_svc.update_status(gkpi_id, "validated")
+        validator = get_validation_service()
+        validation_result = validator.validate(
+            fields=extracted_fields,
+            line_items=extracted_line_items,
+            llm_sustainability_tags=llm_output.get("sustainability_tags", []),
+            llm_compliance=llm_output.get("compliance", {}),
+        )
+        dur = int((_time.time() - t0) * 1000)
+        green_kpi_svc.log_stage(gkpi_id, "validate", "ok", dur,
+                                {"notes": validation_result.get("validation_notes", [])})
+    except Exception as exc:
+        green_kpi_svc.log_stage(gkpi_id, "validate", "error", 0, {"error": str(exc)})
+
+    # ── Stage 5: Store green_kpi.invoice_data ─────────────────────────────
+    t0 = _time.time()
+    try:
+        final_fields = validation_result.get("fields", extracted_fields)
+        confs = [f.get("confidence_score", 0.8) for f in final_fields.values()]
+        avg_conf = sum(confs) / len(confs) if confs else 0.0
+
+        # Determine best extraction method used
+        methods = {f.get("extraction_method", "regex") for f in final_fields.values()}
+        if "gnn" in methods:
+            best_method = "gnn"
+        elif "llm" in methods:
+            best_method = "llm"
+        elif "agent_learned" in methods:
+            best_method = "agent_learned"
+        else:
+            best_method = "regex"
+
+        green_kpi_svc.save_invoice_data(
+            gkpi_invoice_id=gkpi_id,
+            fields=final_fields,
+            line_items=extracted_line_items,
+            sustainability_tags=validation_result.get("sustainability_tags", []),
+            compliance_flags=validation_result.get("compliance_flags", {}),
+            graph_embedding=graph_embedding,
+            confidence_score=round(avg_conf, 4),
+            extraction_method=best_method,
+            llm_prompt=llm_output.get("llm_prompt"),
+            llm_response={"raw": llm_output.get("llm_response_raw")} if llm_output.get("llm_response_raw") else None,
+        )
+        green_kpi_svc.update_status(gkpi_id, validation_result.get("processing_status", "completed"))
+        dur = int((_time.time() - t0) * 1000)
+        green_kpi_svc.log_stage(gkpi_id, "store", "ok", dur)
+    except Exception as exc:
+        green_kpi_svc.log_stage(gkpi_id, "store", "error", 0, {"error": str(exc)})
+        green_kpi_svc.update_status(gkpi_id, "failed", str(exc))
 
 
 @router.get("/status/{invoice_id}")

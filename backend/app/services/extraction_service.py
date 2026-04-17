@@ -4,10 +4,77 @@ from datetime import datetime
 
 
 class FieldExtractionService:
-    """Structured invoice field extraction with row-aware and section-aware rules."""
+    """
+    Service for extracting invoice fields using row-aware and section-aware rules.
+
+    Rule priority (highest → lowest):
+      1. Cluster-specific rules from extraction_rules DB table
+         (learned by ML agents from user corrections for that vendor cluster)
+      2. Global rules from extraction_rules DB table
+      3. Hardcoded default rules (fallback when DB is empty)
+
+    After extraction, every field records the rule_id that produced it so
+    per-rule accuracy can be tracked via the rule_accuracy view.
+    """
 
     def __init__(self):
         self.rules = self._load_default_rules()
+
+    # ------------------------------------------------------------------
+    # Load cluster-specific + global DB rules on top of defaults
+    # ------------------------------------------------------------------
+
+    def load_db_rules(self, cluster_id: Optional[int] = None) -> None:
+        """
+        Fetch active rules from extraction_rules table and merge them into
+        self.rules, replacing defaults where the same field_name is covered.
+
+        Args:
+            cluster_id: if provided, cluster-specific rules are prepended
+                        (highest priority) before global rules.
+        """
+        try:
+            from app.services.supabase_client import get_supabase_admin
+            supabase = get_supabase_admin()
+
+            # Fetch cluster-specific rules first (if cluster_id given), then global
+            rows = (
+                supabase.table("extraction_rules")
+                .select("id, field_name, pattern, rule_type, priority, cluster_id, match_value")
+                .eq("is_active", True)
+                .order("priority", desc=True)
+                .execute()
+                .data or []
+            )
+
+            # Separate cluster-specific from global; cluster rules come first
+            cluster_rows = [r for r in rows if r.get("cluster_id") == cluster_id and cluster_id is not None]
+            global_rows  = [r for r in rows if r.get("cluster_id") is None]
+            ordered = cluster_rows + global_rows
+
+            # Merge: DB rules prepend for each field_name
+            db_rules: Dict[str, List[Dict]] = {}
+            for row in ordered:
+                fname = row["field_name"]
+                if fname not in db_rules:
+                    db_rules[fname] = []
+                db_rules[fname].append({
+                    "type":        row.get("rule_type", "regex"),
+                    "pattern":     row.get("pattern", ""),
+                    "match_value": row.get("match_value"),
+                    "flags":       re.IGNORECASE,
+                    "rule_id":     row["id"],  # traceability
+                    "cluster_id":  row.get("cluster_id"),
+                })
+
+            # Merge db_rules on top of hardcoded defaults
+            for fname, db_rule_list in db_rules.items():
+                default_list = self.rules.get(fname, [])
+                self.rules[fname] = db_rule_list + default_list
+
+        except Exception as exc:
+            # DB rules are a best-effort enhancement; never block extraction
+            print(f"[ExtractionService] Could not load DB rules: {exc}")
 
     def _load_default_rules(self) -> Dict[str, List[Dict]]:
         return {
@@ -157,6 +224,13 @@ class FieldExtractionService:
         }
 
     def extract_fields(self, text: str, word_boxes: List[Dict] = None) -> Dict[str, Any]:
+        """
+        Extract all fields from OCR text.
+
+        Returns:
+            {field_name: {raw_value, normalized_value, confidence_score,
+                          extraction_method, rule_id}}
+        """
         results: Dict[str, Any] = {}
         clean_text = self._clean_text(text)
         lines = self._get_text_lines(clean_text, word_boxes)
@@ -176,40 +250,78 @@ class FieldExtractionService:
         rules: List[Dict],
         word_boxes: List[Dict] = None,
     ) -> Optional[Dict[str, Any]]:
+        """Extract a single field using its rules. Returns the first match."""
+
         for rule in rules:
+            rule_id = rule.get("rule_id")  # None for hardcoded defaults
+
+            # ── match_value shortcut (cluster-learned exact value) ────────────
+            # When the learning loop promotes a correction into an extraction_rule,
+            # it stores the correct value in match_value. If we find it verbatim
+            # in the text we can return it immediately with high confidence.
+            match_val = rule.get("match_value")
+            if match_val and match_val.strip() and match_val.strip() in text:
+                return {
+                    "raw_value":         match_val.strip(),
+                    "normalized_value":  self._normalize_value(field_name, match_val.strip()),
+                    "confidence_score":  0.92,
+                    "extraction_method": "cluster_rule",
+                    "rule_id":           rule_id,
+                }
+
             if rule["type"] == "row_label":
                 value = self._extract_from_same_row_box(word_boxes, rule["labels"], field_name)
                 if not value:
                     value = self._extract_label_value_from_lines(lines, rule["labels"], field_name)
                 if value:
-                    return self._pack_result(field_name, value, "row_label", 0.93)
+                    return self._pack_result(field_name, value, "row_label", 0.93, rule_id)
 
             elif rule["type"] == "summary_label":
                 value = self._extract_summary_value(word_boxes, lines, rule["labels"], field_name)
                 if value:
-                    return self._pack_result(field_name, value, "summary_label", 0.93)
+                    return self._pack_result(field_name, value, "summary_label", 0.93, rule_id)
 
             elif rule["type"] == "regex":
                 value = self._apply_regex_rule(text, rule, field_name)
                 if value:
-                    return self._pack_result(field_name, value, "regex", 0.82)
+                    return self._pack_result(field_name, value, "regex", 0.82, rule_id)
 
             elif rule["type"] == "vendor_top":
                 value = self._extract_vendor_name(text, word_boxes)
                 if value:
-                    return self._pack_result(field_name, value, "vendor_top", 0.75)
+                    return self._pack_result(field_name, value, "vendor_top", 0.75, rule_id)
+
+            elif rule["type"] == "position":
+                if rule.get("region") == "top" and word_boxes:
+                    result = self._extract_from_top(word_boxes, rule.get("max_lines", 3))
+                    if result:
+                        return {
+                            "raw_value":         result,
+                            "normalized_value":  result,
+                            "confidence_score":  0.60,
+                            "extraction_method": "position_based",
+                            "rule_id":           rule_id,
+                        }
 
         return None
 
-    def _pack_result(self, field_name: str, value: str, method: str, confidence: float) -> Dict[str, Any]:
+    def _pack_result(
+        self,
+        field_name: str,
+        value: str,
+        method: str,
+        confidence: float,
+        rule_id=None,
+    ) -> Dict[str, Any]:
         return {
-            "raw_value": value,
-            "normalized_value": self._normalize_value(field_name, value),
-            "confidence_score": confidence,
+            "raw_value":         value,
+            "normalized_value":  self._normalize_value(field_name, value),
+            "confidence_score":  confidence,
             "extraction_method": method,
+            "rule_id":           rule_id,
         }
 
-    def _apply_regex_rule(self, text: str, rule: Dict, field_name: str) -> Optional[str]:
+    def _apply_regex_rule(self, text: str, rule: Dict, field_name: str = "") -> Optional[str]:
         match = re.search(rule["pattern"], text, rule.get("flags", 0))
         if not match:
             return None
@@ -228,6 +340,21 @@ class FieldExtractionService:
             return None
 
         return value
+
+    def _extract_from_top(self, word_boxes: List[Dict], max_lines: int = 3) -> Optional[str]:
+        """Position-based fallback: return text from the top N lines of word_boxes."""
+        boxes = self._normalize_boxes(word_boxes)
+        if not boxes:
+            return None
+        sorted_boxes = sorted(boxes, key=lambda b: b["y1"])
+        if not sorted_boxes:
+            return None
+        top_y = sorted_boxes[0]["y1"]
+        line_h = sorted_boxes[0]["h"] or 12
+        cutoff = top_y + line_h * max_lines
+        top_boxes = [b for b in sorted_boxes if b["y1"] <= cutoff]
+        text = " ".join(b["text"] for b in top_boxes)
+        return self._clean_inline_value(text) or None
 
     def _normalize_boxes(self, word_boxes: List[Dict]) -> List[Dict]:
         if not word_boxes:

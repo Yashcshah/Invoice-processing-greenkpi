@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.services.supabase_client import get_supabase_admin
 from app.services.extraction_service import get_extraction_service
+from app.services.green_kpi_service import get_green_kpi_service
 
 router = APIRouter()
 
@@ -41,15 +42,46 @@ async def validate_fields(request: ValidateFieldsRequest):
     updated_fields = []
     
     for field in request.fields:
+        # Fetch current value before overwriting (needed for corrections)
+        existing = supabase.table('extracted_fields').select(
+            'normalized_value, raw_value'
+        ).eq('invoice_id', request.invoice_id).eq('field_name', field.field_name).execute()
+
         result = supabase.table('extracted_fields').update({
             'validated_value': field.validated_value,
             'is_validated': True,
             'validated_at': datetime.utcnow().isoformat(),
         }).eq('invoice_id', request.invoice_id).eq('field_name', field.field_name).execute()
-        
+
         if result.data:
             updated_fields.append(result.data[0])
-    
+
+        # Write correction to green_kpi.corrections if value was changed
+        if existing.data:
+            original = (
+                existing.data[0].get('normalized_value')
+                or existing.data[0].get('raw_value')
+                or ''
+            )
+            if original.strip().lower() != field.validated_value.strip().lower():
+                try:
+                    gkpi_svc = get_green_kpi_service()
+                    # Look up the green_kpi invoice id
+                    gkpi_inv = supabase.schema('green_kpi').table('invoices').select('id').eq(
+                        'source_invoice_id', request.invoice_id
+                    ).execute().data
+                    if gkpi_inv:
+                        gkpi_svc.save_correction(
+                            gkpi_invoice_id=gkpi_inv[0]['id'],
+                            source_invoice_id=request.invoice_id,
+                            field_name=field.field_name,
+                            original_value=original,
+                            corrected_value=field.validated_value,
+                            source='user',
+                        )
+                except Exception:
+                    pass  # corrections are non-critical
+
     # Check if all fields are validated
     all_fields = supabase.table('extracted_fields').select('is_validated').eq('invoice_id', request.invoice_id).execute()
     all_validated = all(f['is_validated'] for f in all_fields.data) if all_fields.data else False

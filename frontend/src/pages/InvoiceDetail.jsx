@@ -16,6 +16,7 @@ import {
   Folder,
   Download,
 } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 
 const STATUS_STYLES = {
   uploaded: 'bg-gray-100 text-gray-700',
@@ -531,8 +532,12 @@ export default function InvoiceDetail() {
   const [mounted, setMounted] = useState(false)
   const [confidenceWidths, setConfidenceWidths] = useState({})
 
+<<<<<<< Updated upstream
   const pollRef = useRef(null)
   const previewRef = useRef(null)
+=======
+  const channelRef = useRef(null)
+>>>>>>> Stashed changes
 
   useEffect(() => {
     setMounted(true)
@@ -540,8 +545,22 @@ export default function InvoiceDetail() {
 
   useEffect(() => {
     fetchData()
+<<<<<<< Updated upstream
     axios.get('/api/folders').then((res) => setFolders(res.data.folders)).catch(() => {})
     return () => clearInterval(pollRef.current)
+=======
+    axios.get('/api/folders').then(res => setFolders(res.data.folders)).catch(() => {})
+    return () => {
+      const ref = channelRef.current
+      if (!ref) return
+      if (ref._isFallback) {
+        clearInterval(ref._intervalId)
+      } else {
+        supabase.removeChannel(ref)
+      }
+      channelRef.current = null
+    }
+>>>>>>> Stashed changes
   }, [id])
 
   useEffect(() => {
@@ -574,23 +593,61 @@ export default function InvoiceDetail() {
     }
   }
 
-  const startPolling = () => {
-    clearInterval(pollRef.current)
-    pollRef.current = setInterval(async () => {
+  const startRealtime = () => {
+    // Remove any existing channel before creating a new one
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current)
+      channelRef.current = null
+    }
+
+    const channel = supabase
+      .channel(`invoice-status-${id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'invoices', filter: `id=eq.${id}` },
+        (payload) => {
+          const updated = payload.new
+          setInvoice(prev => prev ? { ...prev, ...updated } : updated)
+
+          if (!PROCESSING_STATUSES.includes(updated.status)) {
+            // Processing finished — fetch full data (fields, OCR, line items)
+            setProcessing(false)
+            fetchData()
+            supabase.removeChannel(channel)
+            channelRef.current = null
+          }
+        }
+      )
+      .subscribe((status) => {
+        // If Realtime subscription fails, fall back to polling
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[Realtime] subscription failed, falling back to polling')
+          supabase.removeChannel(channel)
+          channelRef.current = null
+          _startPollingFallback()
+        }
+      })
+
+    channelRef.current = channel
+  }
+
+  const _startPollingFallback = () => {
+    const intervalId = setInterval(async () => {
       try {
         const res = await axios.get(`/api/processing/status/${id}`)
         if (!PROCESSING_STATUSES.includes(res.data.status)) {
-          clearInterval(pollRef.current)
+          clearInterval(intervalId)
           setProcessing(false)
           fetchData()
         } else {
           setInvoice((prev) => (prev ? { ...prev, status: res.data.status } : prev))
         }
       } catch {
-        clearInterval(pollRef.current)
+        clearInterval(intervalId)
         setProcessing(false)
       }
     }, 2500)
+    channelRef.current = { _isFallback: true, _intervalId: intervalId }
   }
 
   const processInvoice = async () => {
@@ -598,7 +655,7 @@ export default function InvoiceDetail() {
     setProcessError(null)
     try {
       await axios.post('/api/processing/process', { invoice_id: id })
-      startPolling()
+      startRealtime()
     } catch (err) {
       setProcessError(err.response?.data?.detail || 'Failed to start processing')
       setProcessing(false)

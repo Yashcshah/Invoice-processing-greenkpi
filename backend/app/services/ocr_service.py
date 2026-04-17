@@ -4,9 +4,13 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import time
+import base64
+import io
 from app.config import get_settings
 
 settings = get_settings()
+
+_TROCR_CONFIDENCE_THRESHOLD = 0.60   # fall back to TrOCR when Tesseract avg conf < this
 
 # NOTE: pytesseract is imported lazily inside _tesseract_ocr() to avoid
 # Python 3.13 compatibility issues at module load time.
@@ -24,23 +28,41 @@ class OCRService:
     
     def extract_text(self, image_path: str) -> Dict[str, Any]:
         """
-        Extract text from an image using OCR
-        
+        Extract text from an image using OCR.
+        If Tesseract confidence is below threshold, falls back to TrOCR via HF API.
+
         Returns:
             Dict with raw_text, confidence, word_boxes, processing_time
         """
         start_time = time.time()
-        
+
         # Load image
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Could not load image: {image_path}")
-        
+
         if self.engine == "tesseract":
             result = self._tesseract_ocr(image)
+            # TrOCR fallback: when Tesseract confidence is low
+            if (
+                result.get('confidence_score', 1.0) < _TROCR_CONFIDENCE_THRESHOLD
+                and settings.hf_token
+            ):
+                try:
+                    trocr_result = self._trocr_ocr(image_path)
+                    if trocr_result and trocr_result.get('raw_text', '').strip():
+                        # Merge: use TrOCR text but keep Tesseract word boxes
+                        result['raw_text'] = trocr_result['raw_text']
+                        result['ocr_engine'] = 'trocr'
+                        result['confidence_score'] = max(
+                            result['confidence_score'],
+                            trocr_result.get('confidence_score', 0.85)
+                        )
+                except Exception as exc:
+                    print(f"[OCR] TrOCR fallback failed: {exc}")
         else:
             result = self._easyocr_ocr(image)
-        
+
         result['processing_time_ms'] = int((time.time() - start_time) * 1000)
         return result
     
@@ -102,6 +124,54 @@ class OCRService:
             'engine_version': engine_version,
         }
     
+    def _trocr_ocr(self, image_path: str) -> Dict[str, Any]:
+        """
+        Fallback OCR using Microsoft TrOCR via Hugging Face Inference API.
+        Called when Tesseract confidence is below _TROCR_CONFIDENCE_THRESHOLD.
+        Requires HF_TOKEN set in .env.
+        """
+        import urllib.request
+        import json as _json
+
+        # Read image and base64-encode it
+        with open(image_path, 'rb') as f:
+            img_bytes = f.read()
+
+        # Resize if large (HF API has a 10 MB limit)
+        pil_img = Image.open(io.BytesIO(img_bytes))
+        if max(pil_img.size) > 2000:
+            pil_img.thumbnail((2000, 2000), Image.LANCZOS)
+            buf = io.BytesIO()
+            pil_img.save(buf, format='PNG')
+            img_bytes = buf.getvalue()
+
+        url = "https://api-inference.huggingface.co/models/microsoft/trocr-large-printed"
+        req = urllib.request.Request(
+            url,
+            data=img_bytes,
+            headers={
+                "Authorization": f"Bearer {settings.hf_token}",
+                "Content-Type": "image/png",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = _json.loads(resp.read())
+
+        # HF returns [{"generated_text": "..."}]
+        if isinstance(data, list) and data:
+            text = data[0].get('generated_text', '')
+        else:
+            text = str(data)
+
+        return {
+            'raw_text': text,
+            'confidence_score': 0.85,
+            'word_boxes': [],
+            'ocr_engine': 'trocr',
+            'engine_version': 'microsoft/trocr-large-printed',
+        }
+
     def _easyocr_ocr(self, image: np.ndarray) -> Dict[str, Any]:
         """Perform OCR using EasyOCR"""
         results = self.reader.readtext(image)

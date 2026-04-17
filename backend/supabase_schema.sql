@@ -330,5 +330,54 @@ CREATE POLICY "Users can manage their folders" ON invoice_folders
     );
 
 -- ============================================================
+-- MIGRATION: ML Cluster Agents
+-- Run this block if schema was already applied above
+-- ============================================================
+
+-- Tracks which cluster each invoice belongs to
+CREATE TABLE IF NOT EXISTS invoice_clusters (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    cluster_id INTEGER NOT NULL,
+    confidence FLOAT DEFAULT 0.0,
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (invoice_id)
+);
+
+-- One row per cluster: stores learned extraction patterns and accuracy stats
+CREATE TABLE IF NOT EXISTS cluster_agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    cluster_id INTEGER NOT NULL UNIQUE,
+    cluster_label TEXT,                          -- human-readable label (e.g. top vendor name)
+    invoice_count INTEGER NOT NULL DEFAULT 0,
+    correction_count INTEGER NOT NULL DEFAULT 0, -- total user corrections in this cluster
+    accuracy_score FLOAT NOT NULL DEFAULT 1.0,   -- avg field-level accuracy (0–1)
+    learned_patterns JSONB NOT NULL DEFAULT '{}',-- {field_name: {accuracy, correction_count, known_corrections}}
+    model_version INTEGER NOT NULL DEFAULT 1,
+    last_trained_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_invoice_clusters_cluster_id ON invoice_clusters(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_clusters_invoice_id ON invoice_clusters(invoice_id);
+
+-- RLS
+ALTER TABLE invoice_clusters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cluster_agents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their invoice clusters" ON invoice_clusters
+    FOR SELECT USING (
+        invoice_id IN (SELECT id FROM invoices WHERE uploaded_by = auth.uid())
+    );
+
+-- cluster_agents are global read-only for authenticated users
+CREATE POLICY "Authenticated users can view cluster agents" ON cluster_agents
+    FOR SELECT USING (auth.uid() IS NOT NULL);
+
+-- Service role (backend) needs full access — granted via service key, bypasses RLS
+
+-- ============================================================
 -- DONE!
 -- ============================================================

@@ -1,5 +1,95 @@
 # Invoice Processing — Change Log
 
+---
+
+## v0.6 — Green KPI Architecture (GNN + LLM + Sustainability)
+**Files added:** `green_kpi_schema.sql`, `services/llm_service.py`, `services/graph_builder.py`, `services/gnn_service.py`, `services/validation_service.py`, `services/green_kpi_service.py`, `routers/green_kpi.py`
+**Files changed:** `requirements.txt`, `config.py`, `main.py`, `routers/processing.py`, `Dashboard.jsx`
+
+### Architecture
+
+End-to-end pipeline added on top of the existing extraction layer:
+
+```
+Invoice Upload → Supabase Storage → Preprocessing → OCR
+  → ML Cluster Agents (TF-IDF / KMeans)
+  → Multimodal LLM Encoding (Gemini 2.5 Flash)
+  → Graph Construction (TF-IDF nodes + spatial/semantic/hierarchical edges)
+  → GNN Reasoning (2-layer GAT — full mode with PyTorch Geometric, lite mode without)
+  → Field Validation (dates, GST reconciliation, amounts)
+  → Sustainability Tagging + Compliance Checks
+  → green_kpi.* tables (Supabase)
+  → Feedback Loop (corrections → cluster agents + GNN fine-tune)
+```
+
+All new stages are **non-blocking** — failures log to `green_kpi.processing_logs` and never break the core invoice pipeline.
+
+### New Services
+
+| Service | Purpose |
+|---------|---------|
+| `llm_service.py` | Gemini 2.5 Flash multimodal encoder — image + OCR → structured JSON + sustainability tags |
+| `graph_builder.py` | Builds invoice document graph: 20-dim node features, 4 edge types (spatial / semantic / hierarchical / logical) |
+| `gnn_service.py` | 2-layer GAT (Graph Attention Network) — full mode (PyTorch + PyG) or lite mode (heuristics) |
+| `validation_service.py` | GST reconciliation, QBCC / retention compliance, sustainability tag catalogue validation |
+| `green_kpi_service.py` | All writes to `green_kpi.*` Supabase tables + aggregate stats |
+
+### New API endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/green-kpi/stats` | Aggregate KPI stats for the dashboard |
+| `GET` | `/api/green-kpi/invoices` | List with sustainability metadata |
+| `GET` | `/api/green-kpi/invoices/{id}` | Full detail + processing stages |
+| `POST` | `/api/green-kpi/corrections` | Submit field correction (feeds learning loop) |
+| `GET` | `/api/green-kpi/compliance/{id}` | GST / QBCC / retention compliance report |
+
+### New Database tables (`green_kpi_schema.sql`)
+
+- `green_kpi.invoices` — linked to source invoice, processing status
+- `green_kpi.invoice_data` — extracted fields, `sustainability_tags` (JSONB), `compliance_flags` (JSONB), `graph_embedding` (JSONB float array), LLM tracing
+- `green_kpi.corrections` — per-field correction history for continuous learning
+- `green_kpi.processing_logs` — per-stage audit trail (stage, status, duration_ms, metadata)
+
+### GNN modes
+
+- **Full mode** — requires `pip install torch torch-geometric` (see requirements.txt comments)
+- **Lite mode** — heuristic graph-feature confidence boosts; runs on any machine with no extra deps
+- Mode is detected automatically at startup; no config change needed
+
+### Green KPI Dashboard panel
+
+New panel on Dashboard between ML Agents and Recent Invoices:
+- Total spend (AUD), avg extraction confidence %, GST compliance %, total corrections
+- Top sustainability tags (pill badges with count)
+- Status breakdown: completed / needs review / failed
+- Silently hidden when green_kpi schema not yet applied
+
+### Configuration
+
+New `.env` variables (all optional — features degrade gracefully without them):
+```env
+GEMINI_API_KEY=          # Gemini 2.5 Flash multimodal LLM
+HF_TOKEN=                # HuggingFace token (for future TrOCR fallback)
+GREEN_KPI_ENABLED=true   # Master toggle for the Green KPI pipeline
+LLM_ENABLED=true         # Toggle LLM stage (requires GEMINI_API_KEY)
+GNN_ENABLED=true         # Toggle GNN stage (auto-detects full vs lite mode)
+```
+
+### Sustainability tags supported
+
+`renewable_energy` · `solar` · `wind` · `carbon_offset` · `recycled_materials` ·
+`low_emissions` · `green_building` · `water_conservation` · `waste_management` ·
+`electric_vehicle` · `sustainable_packaging` · `energy_efficiency` · `other_green`
+
+### Australian compliance checks
+
+- **GST**: validates 10 % tax against subtotal; infers `tax_amount` if missing
+- **QBCC**: flags building/construction invoices (Queensland licencing context)
+- **Retention**: detects progress-claim / retention clauses in line items
+
+---
+
 A running log of every feature, fix, and improvement made to this project.
 
 ---
