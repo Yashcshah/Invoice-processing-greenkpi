@@ -30,11 +30,11 @@ import {
 } from 'lucide-react'
 
 const PIPELINE_STEPS = [
-  { id: 'preprocess', label: 'Preprocess', Icon: ScanLine, tone: 'bg-blue-500' },
-  { id: 'ocr', label: 'OCR', Icon: Eye, tone: 'bg-sky-500' },
-  { id: 'llm', label: 'LLM', Icon: Sparkles, tone: 'bg-indigo-500' },
-  { id: 'gnn', label: 'GNN', Icon: GitBranch, tone: 'bg-violet-500' },
-  { id: 'review', label: 'Review', Icon: ClipboardCheck, tone: 'bg-emerald-500' },
+  { id: 'preprocess', label: 'Preprocess', Icon: ScanLine, tone: 'from-blue-500 to-cyan-500' },
+  { id: 'ocr', label: 'OCR', Icon: Eye, tone: 'from-sky-500 to-blue-500' },
+  { id: 'llm', label: 'LLM', Icon: Sparkles, tone: 'from-indigo-500 to-violet-500' },
+  { id: 'gnn', label: 'GNN', Icon: GitBranch, tone: 'from-violet-500 to-fuchsia-500' },
+  { id: 'review', label: 'Review', Icon: ClipboardCheck, tone: 'from-emerald-500 to-green-500' },
 ]
 
 export default function Dashboard() {
@@ -201,17 +201,44 @@ export default function Dashboard() {
     return 'bg-slate-300'
   }
 
+  const statCards = [
+    {
+      title: 'Total invoices',
+      key: 'total',
+      Icon: FileText,
+      iconBg: 'bg-blue-50 text-blue-600',
+    },
+    {
+      title: 'In progress',
+      key: 'processing',
+      Icon: Clock,
+      iconBg: 'bg-amber-50 text-amber-600',
+    },
+    {
+      title: 'Completed',
+      key: 'completed',
+      Icon: CheckCircle,
+      iconBg: 'bg-emerald-50 text-emerald-600',
+    },
+    {
+      title: 'Failed',
+      key: 'failed',
+      Icon: AlertTriangle,
+      iconBg: 'bg-rose-50 text-rose-600',
+    },
+  ]
+
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="h-64 rounded-3xl shimmer-bg" />
+      <div className="space-y-5">
+        <div className="h-48 rounded-3xl shimmer-bg" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-28 rounded-3xl shimmer-bg" />
           ))}
         </div>
         <div className="h-80 rounded-3xl shimmer-bg" />
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
           <div className="h-80 rounded-3xl shimmer-bg" />
           <div className="h-80 rounded-3xl shimmer-bg" />
         </div>
@@ -221,99 +248,82 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-blue-200 bg-gradient-to-br from-blue-600 via-blue-600 to-indigo-600 p-6 text-white shadow-xl shadow-blue-200/60 sm:p-8">
-        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-cyan-300/10 blur-2xl" />
-
-        <div className="relative flex flex-col gap-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+    <div className="space-y-5">
+      {/* HERO */}
+      <section className="relative overflow-hidden rounded-[28px] border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 text-white shadow-xl sm:p-6">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_25%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.18),transparent_30%)]" />
+        <div className="relative">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-2xl">
-              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-blue-100">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 backdrop-blur">
                 <Sparkles className="h-3.5 w-3.5" />
-                AI-powered processing
+                AI invoice intelligence
               </div>
 
-              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
-                Invoice processing dashboard
+              <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                Invoice dashboard
               </h1>
 
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-blue-100 sm:text-base">
-                Track upload volume, extraction confidence, ML agent learning, and green KPI
-                signals across your invoice pipeline.
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                A cleaner view of invoice activity, confidence trends, machine learning insights,
+                and sustainability metrics.
               </p>
             </div>
 
-            <Link
-              to="/upload"
-              className="inline-flex items-center gap-2 self-start rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-blue-700 shadow-lg transition hover:-translate-y-0.5 hover:bg-blue-50 hover:shadow-xl"
-            >
-              <Upload className="h-4 w-4" />
-              Upload invoice
-            </Link>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                to="/upload"
+                className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-lg transition hover:-translate-y-0.5 hover:bg-slate-100"
+              >
+                <Upload className="h-4 w-4" />
+                Upload invoice
+              </Link>
+
+              <Link
+                to="/invoices"
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/10"
+              >
+                View invoices
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[
-              {
-                label: 'Total invoices',
-                value: displayStats.total,
-                icon: FileText,
-                accent: 'text-blue-100',
-              },
-              {
-                label: 'In progress',
-                value: displayStats.processing,
-                icon: Clock,
-                accent: 'text-amber-200',
-              },
-              {
-                label: 'Completed',
-                value: displayStats.completed,
-                icon: CheckCircle,
-                accent: 'text-emerald-200',
-              },
-              {
-                label: 'Failed',
-                value: displayStats.failed,
-                icon: AlertTriangle,
-                accent: 'text-rose-200',
-              },
-            ].map(({ label, value, icon: Icon, accent }) => (
+          <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {statCards.map(({ title, key, Icon }) => (
               <div
-                key={label}
-                className="rounded-2xl border border-white/10 bg-white/10 px-4 py-4 backdrop-blur-sm"
+                key={title}
+                className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-md"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10">
-                    <Icon className={`h-5 w-5 ${accent}`} />
+                    <Icon className="h-5 w-5 text-white" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold leading-none">{value}</p>
-                    <p className="mt-1 text-xs text-blue-100">{label}</p>
+                    <p className="text-xl font-bold leading-none">{displayStats[key]}</p>
+                    <p className="mt-1 text-xs text-slate-300">{title}</p>
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
-          <div>
-            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-100">
+          <div className="mt-5">
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
               Processing pipeline
             </p>
-
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               {PIPELINE_STEPS.map((step) => (
                 <div
                   key={step.id}
-                  className="rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-center backdrop-blur-sm"
+                  className="rounded-2xl border border-white/10 bg-white/5 px-3 py-4 text-center backdrop-blur-sm"
                 >
                   <div
-                    className={`mx-auto flex h-11 w-11 items-center justify-center rounded-2xl ${step.tone} shadow-lg`}
+                    className={`mx-auto flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br ${step.tone} shadow-lg`}
                   >
-                    <step.Icon className="h-5 w-5 text-white" />
+                    <step.Icon className="h-4.5 w-4.5 text-white" />
                   </div>
-                  <p className="mt-3 text-sm font-semibold text-white">{step.label}</p>
+                  <p className="mt-2 text-xs font-semibold text-slate-200">{step.label}</p>
                 </div>
               ))}
             </div>
@@ -321,57 +331,34 @@ export default function Dashboard() {
         </div>
       </section>
 
+      {/* SECOND KPI ROW */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          {
-            title: 'Total invoices',
-            key: 'total',
-            Icon: FileText,
-            bg: 'from-blue-500 to-blue-600',
-          },
-          {
-            title: 'In progress',
-            key: 'processing',
-            Icon: Clock,
-            bg: 'from-amber-400 to-orange-500',
-          },
-          {
-            title: 'Completed',
-            key: 'completed',
-            Icon: CheckCircle,
-            bg: 'from-emerald-400 to-green-500',
-          },
-          {
-            title: 'Failed',
-            key: 'failed',
-            Icon: AlertTriangle,
-            bg: 'from-rose-400 to-red-500',
-          },
-        ].map(({ title, key, Icon, bg }) => (
+        {statCards.map(({ title, key, Icon, iconBg }) => (
           <div
             key={title}
-            className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
+            className="group rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
           >
-            <div className="flex items-center gap-4">
-              <div
-                className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br ${bg} text-white shadow-lg`}
-              >
-                <Icon className="h-5 w-5" />
-              </div>
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   {title}
                 </p>
-                <p className="mt-1 text-3xl font-bold leading-none text-slate-900">
+                <p className="mt-2 text-3xl font-bold leading-none text-slate-900">
                   {displayStats[key]}
                 </p>
+              </div>
+              <div
+                className={`flex h-12 w-12 items-center justify-center rounded-2xl ${iconBg} transition group-hover:scale-105`}
+              >
+                <Icon className="h-5 w-5" />
               </div>
             </div>
           </div>
         ))}
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+      {/* CONFIDENCE TREND */}
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
@@ -387,7 +374,7 @@ export default function Dashboard() {
 
           {confidenceTrend.length > 0 && (
             <div className="text-left sm:text-right">
-              <p className="text-2xl font-bold leading-none text-blue-600">
+              <p className="text-xl font-bold leading-none text-blue-600">
                 {confidenceTrend[confidenceTrend.length - 1]?.avg_confidence ?? '—'}%
               </p>
               <p className="text-xs text-slate-500">latest</p>
@@ -398,13 +385,14 @@ export default function Dashboard() {
         <div className="px-4 py-4 sm:px-5">
           <ConfidenceTrendChart
             data={confidenceTrend}
-            height={240}
+            height={220}
             loading={trendLoading}
           />
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      {/* ML + GREEN KPI */}
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
@@ -485,7 +473,7 @@ export default function Dashboard() {
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Accuracy by cluster
                 </p>
-                <ClusterAccuracyChart data={clusterBarData} height={180} loading={mlLoading} />
+                <ClusterAccuracyChart data={clusterBarData} height={175} loading={mlLoading} />
               </div>
 
               <div className="space-y-2">
@@ -597,7 +585,7 @@ export default function Dashboard() {
                 </p>
                 <KpiDoughnutChart
                   data={gstDoughnutData}
-                  height={210}
+                  height={190}
                   loading={greenLoading}
                   title={`${greenStats.gst_compliance_pct ?? 0}%`}
                   subtitle="GST OK"
@@ -632,6 +620,7 @@ export default function Dashboard() {
         </article>
       </section>
 
+      {/* RECENT INVOICES */}
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
@@ -671,44 +660,46 @@ export default function Dashboard() {
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-slate-100">
-            {recentInvoices.map((invoice) => (
-              <li key={invoice.id}>
-                <Link
-                  to={`/invoices/${invoice.id}`}
-                  className="group flex flex-col gap-4 px-5 py-4 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-slate-100 transition group-hover:bg-blue-100">
-                      <FileText className="h-5 w-5 text-slate-500 group-hover:text-blue-600" />
-                      <span
-                        className={`absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white ${getStatusDot(invoice.status)}`}
-                      />
+          <div className="p-4 sm:p-5">
+            <ul className="space-y-3">
+              {recentInvoices.map((invoice) => (
+                <li key={invoice.id}>
+                  <Link
+                    to={`/invoices/${invoice.id}`}
+                    className="group flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 transition hover:border-blue-200 hover:bg-blue-50/40 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm transition group-hover:bg-blue-100">
+                        <FileText className="h-5 w-5 text-slate-500 group-hover:text-blue-600" />
+                        <span
+                          className={`absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white ${getStatusDot(invoice.status)}`}
+                        />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900 group-hover:text-blue-700">
+                          {invoice.original_filename}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {invoice.vendor_name && (
+                            <span className="font-medium text-indigo-600">
+                              {invoice.vendor_name} ·{' '}
+                            </span>
+                          )}
+                          {new Date(invoice.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900 group-hover:text-blue-700">
-                        {invoice.original_filename}
-                      </p>
-                      <p className="mt-1 truncate text-xs text-slate-500">
-                        {invoice.vendor_name && (
-                          <span className="font-medium text-indigo-600">
-                            {invoice.vendor_name} ·{' '}
-                          </span>
-                        )}
-                        {new Date(invoice.created_at).toLocaleDateString()}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <StatusPill status={invoice.status} />
+                      <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <StatusPill status={invoice.status} />
-                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
     </div>

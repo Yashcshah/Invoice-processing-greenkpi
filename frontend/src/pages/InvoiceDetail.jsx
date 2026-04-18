@@ -26,19 +26,6 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
-const STATUS_STYLES = {
-  uploaded: 'bg-gray-100 text-gray-700',
-  preprocessing: 'bg-yellow-100 text-yellow-700',
-  preprocessed: 'bg-blue-100 text-blue-700',
-  ocr_processing: 'bg-yellow-100 text-yellow-700',
-  ocr_complete: 'bg-blue-100 text-blue-700',
-  extraction_processing: 'bg-yellow-100 text-yellow-700',
-  extraction_complete: 'bg-green-100 text-green-700',
-  validated: 'bg-green-100 text-green-700',
-  exported: 'bg-purple-100 text-purple-700',
-  failed: 'bg-red-100 text-red-700',
-}
-
 const PROCESSING_STATUSES = ['preprocessing', 'ocr_processing', 'extraction_processing']
 
 const STEPS = [
@@ -392,8 +379,8 @@ function InvoicePreviewCard({
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Invoice preview</h2>
           <p className="text-xs text-slate-500">Click a value to edit it</p>
@@ -407,15 +394,15 @@ function InvoicePreviewCard({
         )}
       </div>
 
-      <div className="bg-slate-50 p-3 sm:p-5 lg:p-6">
+     <div className="bg-slate-50 p-3 sm:p-4 lg:p-5">
         <div
           ref={previewRef}
-          className="mx-auto max-w-5xl border border-slate-200 bg-[#fafaf7] px-4 py-5 shadow-sm sm:px-8 sm:py-8"
+          className="mx-auto max-w-[1100px] border border-slate-200 bg-[#fafaf7] px-4 py-5 shadow-sm sm:px-8 sm:py-7"
         >
-          <div className="mb-6">
+          <div className="mb-5">
             <div className="text-center">
               <h1
-                className="text-[28px] font-bold leading-tight tracking-wide"
+                className="text-[28px] font-bold leading-tight tracking-wide sm:text-[34px]"
                 style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
               >
                 <EditableValue
@@ -434,25 +421,25 @@ function InvoicePreviewCard({
           </div>
 
           <div
-            className="mb-6 border py-2 text-center text-[18px] font-bold"
+            className="mb-5 border py-2 text-center text-[16px] font-bold sm:text-[18px]"
             style={{ color: ui.accent, borderColor: ui.accent }}
           >
             {ui.accountTitle}
           </div>
 
-          <div className="mb-8 overflow-hidden border border-slate-400 bg-white">
-            <table className="w-full border-collapse text-[15px]">
+          <div className="mb-6 overflow-x-auto border border-slate-400 bg-white">
+            <table className="w--full min-w-[760px] border-collapse text-[15px]">
               <tbody>
                 <tr>
-                  <td className="border border-slate-300 px-3 py-2 font-medium w-[20%]">Invoice ID</td>
-                  <td className="border border-slate-300 px-3 py-2 w-[30%]">
+                  <td className="w-[20%] border border-slate-300 px-3 py-2 font-medium">Invoice ID</td>
+                  <td className="w-[30%] border border-slate-300 px-3 py-2">
                     <EditableValue
                       fieldNames={['invoice_number', 'invoice_id']}
                       displayValue={textOrDash(invoiceNumber)}
                     />
                   </td>
-                  <td className="border border-slate-300 px-3 py-2 font-medium w-[20%]">Invoice Date</td>
-                  <td className="border border-slate-300 px-3 py-2 w-[30%]">
+                  <td className="w-[20%] border border-slate-300 px-3 py-2 font-medium">Invoice Date</td>
+                  <td className="w-[30%] border border-slate-300 px-3 py-2">
                     <EditableValue fieldNames="invoice_date" displayValue={formatDate(invoiceDate)} />
                   </td>
                 </tr>
@@ -481,76 +468,78 @@ function InvoicePreviewCard({
             </table>
           </div>
 
-          <div className="mb-10">
+          <div className="mb-8">
             <h3
-              className="mb-3 text-[18px] font-bold"
+              className="mb-3 text-[16px] font-bold sm:text-[18px]"
               style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
             >
               {ui.infoTitle}
             </h3>
 
-            <table className="w-full border-collapse bg-white text-[15px]">
-              <tbody>
-                <tr>
-                  <td
-                    className="w-[25%] border border-slate-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
-                    {ui.customerLabel}
-                  </td>
-                  <td className="border border-slate-300 px-3 py-2">
-                    <EditableValue
-                      fieldNames={['customer_name', 'company_name']}
-                      displayValue={textOrDash(customerName)}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td
-                    className="border border-slate-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
-                    {ui.siteLabel}
-                  </td>
-                  <td className="border border-slate-300 px-3 py-2">
-                    <EditableValue
-                      fieldNames={['site_name', 'property_type']}
-                      displayValue={textOrDash(siteName)}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td
-                    className="border border-slate-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
-                    {ui.addressLabel}
-                  </td>
-                  <td className="border border-slate-300 px-3 py-2 break-words">
-                    <EditableValue
-                      fieldNames={['supply_address', 'property_address']}
-                      displayValue={textOrDash(supplyAddress)}
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td
-                    className="border border-slate-300 px-3 py-2 font-medium"
-                    style={{ backgroundColor: ui.sectionBg }}
-                  >
-                    {ui.meterLabel}
-                  </td>
-                  <td className="border border-slate-300 px-3 py-2">
-                    <EditableValue fieldNames="meter_id" displayValue={textOrDash(meterId)} />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse bg-white text-[15px]">
+                <tbody>
+                  <tr>
+                    <td
+                      className="w-[25%] border border-slate-300 px-3 py-2 font-medium"
+                      style={{ backgroundColor: ui.sectionBg }}
+                    >
+                      {ui.customerLabel}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2">
+                      <EditableValue
+                        fieldNames={['customer_name', 'company_name']}
+                        displayValue={textOrDash(customerName)}
+                      />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td
+                      className="border border-slate-300 px-3 py-2 font-medium"
+                      style={{ backgroundColor: ui.sectionBg }}
+                    >
+                      {ui.siteLabel}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2">
+                      <EditableValue
+                        fieldNames={['site_name', 'property_type']}
+                        displayValue={textOrDash(siteName)}
+                      />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td
+                      className="border border-slate-300 px-3 py-2 font-medium"
+                      style={{ backgroundColor: ui.sectionBg }}
+                    >
+                      {ui.addressLabel}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2 break-words">
+                      <EditableValue
+                        fieldNames={['supply_address', 'property_address']}
+                        displayValue={textOrDash(supplyAddress)}
+                      />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td
+                      className="border border-slate-300 px-3 py-2 font-medium"
+                      style={{ backgroundColor: ui.sectionBg }}
+                    >
+                      {ui.meterLabel}
+                    </td>
+                    <td className="border border-slate-300 px-3 py-2">
+                      <EditableValue fieldNames="meter_id" displayValue={textOrDash(meterId)} />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <div className="mb-6">
+          <div className="mb-5">
             <h3
-              className="mb-3 text-[18px] font-bold"
+              className="mb-3 text-[16px] font-bold sm:text-[18px]"
               style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
             >
               {ui.chargesTitle}
@@ -563,7 +552,7 @@ function InvoicePreviewCard({
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse bg-white text-[15px]">
+              <table className="w-full min-w-[760px] border-collapse bg-white text-[15px]">
                 <thead>
                   <tr style={{ backgroundColor: ui.tableHeaderBg }} className="text-white">
                     <th className="border border-slate-400 px-3 py-2 text-left">Description</th>
@@ -595,7 +584,7 @@ function InvoicePreviewCard({
           </div>
 
           <div className="flex justify-center">
-            <table className="w-full max-w-xl border-collapse text-[15px]" style={{ backgroundColor: ui.summaryBg }}>
+            <table className="w-full max-w-lg border-collapse text-[14px]" style={{ backgroundColor: ui.summaryBg }}>
               <tbody>
                 <tr>
                   <td className="border border-slate-300 px-3 py-2 font-medium">Subtotal</td>
@@ -627,7 +616,7 @@ function InvoicePreviewCard({
             </table>
           </div>
 
-          <div className="mt-8 text-xs text-slate-400">
+          <div className="mt-6 text-xs text-slate-400">
             Preview generated from backend extracted fields for {invoice?.original_filename}
           </div>
         </div>
@@ -694,7 +683,7 @@ function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }
           if (e.key === 'Escape') onCancel()
         }}
         aria-label={`Edit ${field.field_name.replace(/_/g, ' ')}`}
-        className="field-edit-active min-w-0 flex-1 rounded-xl border border-blue-400 px-3 py-2 text-sm outline-none"
+        className="field-edit-active min-w-0 flex-1 rounded-lg border border-blue-400 px-2.5 py-1.5 text-sm outline-none"
         autoFocus
       />
       <button
@@ -702,7 +691,7 @@ function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }
         disabled={saving}
         title="Save"
         aria-label="Save edit"
-        className="flex-shrink-0 rounded-lg bg-blue-600 p-2 text-white transition hover:bg-blue-700 disabled:opacity-50"
+        className="flex-shrink-0 rounded-md bg-blue-600 p-1.5 text-white transition hover:bg-blue-700 disabled:opacity-50"
       >
         <Check className="h-3.5 w-3.5" />
       </button>
@@ -710,7 +699,7 @@ function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }
         onClick={onCancel}
         title="Cancel"
         aria-label="Cancel edit"
-        className="flex-shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
+        className="flex-shrink-0 rounded-md border border-slate-200 p-1.5 text-slate-500 transition hover:bg-slate-50"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -733,8 +722,8 @@ function FieldRow({
   const displayValue = field.validated_value ?? field.normalized_value ?? field.raw_value
 
   return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      <div className="mb-1 flex items-center justify-between">
+    <div className="py-2 first:pt-0 last:pb-0">
+      <div className="mb-0.5 flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           {field.field_name.replace(/_/g, ' ')}
         </span>
@@ -763,7 +752,7 @@ function FieldRow({
           type="button"
           onClick={() => onEdit(field)}
           className={[
-            'w-full rounded-xl px-3 py-2 text-left transition hover:bg-white hover:ring-2 hover:ring-blue-200',
+            'w-full rounded-lg px-2.5 py-1.5 text-left transition hover:bg-white hover:ring-2 hover:ring-blue-200',
             align === 'right' ? 'text-right' : '',
           ].join(' ')}
         >
@@ -782,7 +771,7 @@ function FieldRow({
       )}
 
       {field.confidence_score != null && (
-        <ConfidenceBar value={field.confidence_score} showLabel className="mt-1.5" />
+        <ConfidenceBar value={field.confidence_score} showLabel className="mt-1" />
       )}
     </div>
   )
@@ -829,11 +818,11 @@ function ExtractedFieldsPanel({
   if (!fields.length) {
     return (
       <div
-        className="flex min-h-[240px] flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm"
+        className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm"
         aria-label="Extracted fields — empty"
       >
-        <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-3xl bg-blue-50">
-          <FileText className="h-7 w-7 text-blue-300" />
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50">
+          <FileText className="h-6 w-6 text-blue-300" />
         </div>
         <p className="text-sm font-medium text-slate-600">
           {canProcess
@@ -861,8 +850,8 @@ function ExtractedFieldsPanel({
   }
 
   return (
-    <aside className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+    <aside className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start justify-between border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Extracted fields</h2>
           <p className="text-xs text-slate-500">Tap any value to edit and validate</p>
@@ -876,18 +865,18 @@ function ExtractedFieldsPanel({
       </div>
 
       {avgConfidence !== null && (
-        <div className="px-5 pb-1 pt-3">
+        <div className="px-4 pb-1 pt-3">
           <ConfidenceBar value={avgConfidence / 100} showLabel={false} className="w-full" />
         </div>
       )}
 
-      <div className="px-5 pb-4">
+      <div className="px-4 pb-3">
         {FIELD_SECTIONS.map((section) => {
           const sectionFields = section.fields.map((name) => byName[name]).filter(Boolean)
           if (!sectionFields.length) return null
 
           return (
-            <div key={section.id} className="border-b border-slate-100 py-4 last:border-b-0">
+            <div key={section.id} className="border-b border-slate-100 py-3 last:border-b-0">
               <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
                 {section.title}
               </p>
@@ -901,7 +890,7 @@ function ExtractedFieldsPanel({
         })}
 
         {otherFields.length > 0 && (
-          <div className="py-4">
+          <div className="py-3">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
               Other
             </p>
@@ -915,7 +904,7 @@ function ExtractedFieldsPanel({
       </div>
 
       {fields.some((f) => f.confidence_score != null) && (
-        <div className="border-t border-slate-100 px-5 py-4">
+        <div className="border-t border-slate-100 px-4 py-3">
           <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
             Field confidence
           </p>
@@ -924,7 +913,7 @@ function ExtractedFieldsPanel({
       )}
 
       {gst !== null && (
-        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-slate-50/70 px-5 py-4">
+        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-slate-50/70 px-4 py-3">
           <KpiChip type={gst.ok ? 'gst_ok' : 'gst_issue'} />
           {!gst.totalOk && (
             <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
@@ -952,13 +941,13 @@ function OcrCollapsible({ ocrResults }) {
   const meta = [engine, confPct, timing].filter(Boolean).join(' · ')
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls="ocr-body"
-        className="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-slate-50"
+        className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-slate-50"
       >
         <div>
           <h2 className="text-sm font-semibold text-slate-900">OCR raw text</h2>
@@ -970,8 +959,8 @@ function OcrCollapsible({ ocrResults }) {
 
       <div id="ocr-body" className={`grid transition-all duration-300 ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
         <div className="overflow-hidden">
-          <div className="border-t border-slate-100 px-5 pb-5 pt-3">
-            <pre className="max-h-[320px] overflow-auto rounded-2xl bg-slate-50 p-4 font-mono text-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
+          <div className="border-t border-slate-100 px-4 pb-4 pt-3">
+            <pre className="max-h-[280px] overflow-auto rounded-2xl bg-slate-50 p-4 font-mono text-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
               {result.raw_text || 'No text extracted'}
             </pre>
           </div>
@@ -991,7 +980,7 @@ const SUSTAIN_TAG_TYPES = new Set([
 
 function GreenKpiStrip({ data, loading }) {
   if (loading) {
-    return <div className="h-16 rounded-3xl shimmer-bg" aria-hidden="true" />
+    return <div className="h-14 rounded-2xl shimmer-bg" aria-hidden="true" />
   }
 
   if (!data) return null
@@ -1038,7 +1027,7 @@ function GreenKpiStrip({ data, loading }) {
   const summary = summaryParts.join(' · ')
 
   return (
-    <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center">
       <div className="flex-shrink-0">
         <p className="text-sm font-semibold text-slate-900">Green KPI</p>
         <p className="text-xs text-slate-500">Compliance and sustainability</p>
@@ -1354,12 +1343,12 @@ export default function InvoiceDetail() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <div className="h-8 w-40 rounded shimmer-bg" />
-        <div className="h-28 rounded-3xl shimmer-bg" />
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr),420px]">
-          <div className="h-[680px] rounded-3xl shimmer-bg" />
-          <div className="h-[680px] rounded-3xl shimmer-bg" />
+        <div className="h-24 rounded-2xl shimmer-bg" />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.85fr),340px]">
+          <div className="h-[620px] rounded-2xl shimmer-bg" />
+          <div className="h-[620px] rounded-2xl shimmer-bg" />
         </div>
       </div>
     )
@@ -1385,7 +1374,7 @@ export default function InvoiceDetail() {
   }
 
   return (
-    <div className={`space-y-6 transition-opacity duration-300 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`space-y-4 transition-opacity duration-300 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
       <div className="space-y-4">
         <button
           onClick={() => navigate('/invoices')}
@@ -1395,90 +1384,90 @@ export default function InvoiceDetail() {
           Back to invoices
         </button>
 
-        <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Invoice workspace
-                </div>
+      <section className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 px-4 py-3 shadow-sm sm:px-5 sm:py-4">
+  <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="min-w-0">
+        <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+          <Sparkles className="h-3 w-3" />
+          Invoice workspace
+        </div>
 
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-blue-100">
-                    <FileText className="h-6 w-6 text-blue-600" />
-                  </div>
-
-                  <div className="min-w-0">
-                    <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                      {invoice?.original_filename}
-                    </h1>
-                    <p className="mt-2 text-sm text-slate-500">{fileMeta}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusPill status={invoice?.status} />
-
-                {avgConfidence !== null && (
-                  <span
-                    className={[
-                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold',
-                      avgConfidence >= 80
-                        ? 'border-green-200 bg-green-50 text-green-700'
-                        : avgConfidence >= 55
-                        ? 'border-blue-200 bg-blue-50 text-blue-700'
-                        : 'border-orange-200 bg-orange-50 text-orange-700',
-                    ].join(' ')}
-                  >
-                    <span
-                      className={[
-                        'h-1.5 w-1.5 rounded-full',
-                        avgConfidence >= 80
-                          ? 'bg-green-500'
-                          : avgConfidence >= 55
-                          ? 'bg-blue-500'
-                          : 'bg-orange-500',
-                      ].join(' ')}
-                    />
-                    Avg confidence {avgConfidence}%
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={exportPreviewAsPdf}
-                disabled={exportingPdf || (!hasFields && !hasLineItems)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
-              >
-                <Download className="h-4 w-4" />
-                {exportingPdf ? 'Exporting…' : 'Export PDF'}
-              </button>
-
-              {canProcess || isActivelyProcessing || processing ? (
-                <button
-                  onClick={processInvoice}
-                  disabled={processing || isActivelyProcessing}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-4 w-4 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`} />
-                  {processing || isActivelyProcessing ? 'Processing…' : 'Process invoice'}
-                </button>
-              ) : hasOcr ? (
-                <button
-                  onClick={processInvoice}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Reprocess
-                </button>
-              ) : null}
-            </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-blue-100">
+            <FileText className="h-4.5 w-4.5 text-blue-600" />
           </div>
-        </section>
+
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
+              {invoice?.original_filename}
+            </h1>
+            <p className="mt-1 text-xs text-slate-500">{fileMeta}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusPill status={invoice?.status} />
+
+        {avgConfidence !== null && (
+          <span
+            className={[
+              'inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold',
+              avgConfidence >= 80
+                ? 'border-green-200 bg-green-50 text-green-700'
+                : avgConfidence >= 55
+                ? 'border-blue-200 bg-blue-50 text-blue-700'
+                : 'border-orange-200 bg-orange-50 text-orange-700',
+            ].join(' ')}
+          >
+            <span
+              className={[
+                'h-1.5 w-1.5 rounded-full',
+                avgConfidence >= 80
+                  ? 'bg-green-500'
+                  : avgConfidence >= 55
+                  ? 'bg-blue-500'
+                  : 'bg-orange-500',
+              ].join(' ')}
+            />
+            Avg confidence {avgConfidence}%
+          </span>
+        )}
+      </div>
+    </div>
+
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={exportPreviewAsPdf}
+        disabled={exportingPdf || (!hasFields && !hasLineItems)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+      >
+        <Download className="h-3.5 w-3.5" />
+        {exportingPdf ? 'Exporting…' : 'Export PDF'}
+      </button>
+
+      {canProcess || isActivelyProcessing || processing ? (
+        <button
+          onClick={processInvoice}
+          disabled={processing || isActivelyProcessing}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-2 text-xs sm:text-sm font-semibold text-white shadow-sm transition hover:shadow-md disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`} />
+          {processing || isActivelyProcessing ? 'Processing…' : 'Process invoice'}
+        </button>
+      ) : hasOcr ? (
+        <button
+          onClick={processInvoice}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Reprocess
+        </button>
+      ) : null}
+    </div>
+  </div>
+</section>
 
         {processError && (
           <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -1488,8 +1477,8 @@ export default function InvoiceDetail() {
         )}
 
         {(processing || isActivelyProcessing) && (
-          <section className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+          <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
               Pipeline progress
             </p>
 
@@ -1501,7 +1490,7 @@ export default function InvoiceDetail() {
                 return (
                   <div
                     key={step.key}
-                    className={`rounded-2xl border px-4 py-4 text-center ${
+                    className={`rounded-xl border px-3 py-3 text-center ${
                       done
                         ? 'border-blue-200 bg-blue-50'
                         : active
@@ -1510,7 +1499,7 @@ export default function InvoiceDetail() {
                     }`}
                   >
                     <div
-                      className={`mx-auto flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-bold ${
+                      className={`mx-auto flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold ${
                         done
                           ? 'bg-blue-600 text-white'
                           : active
@@ -1520,7 +1509,7 @@ export default function InvoiceDetail() {
                     >
                       {done ? <Check className="h-4 w-4" /> : i + 1}
                     </div>
-                    <p className={`mt-3 text-sm font-semibold ${done || active ? 'text-slate-900' : 'text-slate-500'}`}>
+                    <p className={`mt-2 text-xs sm:text-sm font-semibold ${done || active ? 'text-slate-900' : 'text-slate-500'}`}>
                       {step.label}
                     </p>
                   </div>
@@ -1565,7 +1554,7 @@ export default function InvoiceDetail() {
             value={invoice?.folder_id || ''}
             onChange={(e) => assignFolder(e.target.value || null)}
             disabled={assigningFolder}
-            className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
           >
             <option value="">— Unassigned —</option>
             {folders.map((f) => (
@@ -1577,14 +1566,14 @@ export default function InvoiceDetail() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr),420px]">
-        <div className="min-w-0 space-y-3">
-          <p className="flex items-center gap-1.5 text-xs text-slate-500">
-            <Edit2 className="h-3.5 w-3.5 text-blue-400" />
-            Click any highlighted value to edit
-          </p>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,2.1fr),320px]">
+  <div className="min-w-0 space-y-2">
+    <p className="flex items-center gap-1.5 text-xs text-slate-500">
+      <Edit2 className="h-3.5 w-3.5 text-blue-400" />
+      Click any highlighted value to edit
+    </p>
 
-          <div className="overflow-auto rounded-3xl border border-slate-200 bg-blue-50/50 p-3 shadow-sm sm:p-4 lg:p-5">
+    <div className="overflow-auto rounded-2xl border border-slate-200 bg-blue-50/40 p-3 shadow-sm sm:p-4">
             {hasFields || hasLineItems ? (
               <InvoicePreviewCard
                 extractedFields={extractedFields}
@@ -1594,9 +1583,9 @@ export default function InvoiceDetail() {
                 onEditField={startEditField}
               />
             ) : (
-              <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-20 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-blue-50">
-                  <Eye className="h-8 w-8 text-blue-300" />
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50">
+                  <Eye className="h-7 w-7 text-blue-300" />
                 </div>
                 <p className="text-base font-semibold text-slate-800">No preview yet</p>
                 <p className="mt-2 text-sm text-slate-500">
@@ -1630,19 +1619,19 @@ export default function InvoiceDetail() {
       )}
 
       {hasLineItems && (
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-900">Line items</h2>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80">
                   {['#', 'Description', 'Qty', 'Unit Price', 'Total'].map((h, i) => (
                     <th
                       key={i}
-                      className={`px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
+                      className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
                         i >= 2 ? 'text-right' : 'text-left'
                       }`}
                     >
@@ -1655,13 +1644,13 @@ export default function InvoiceDetail() {
               <tbody className="divide-y divide-slate-100">
                 {lineItems.map((item) => (
                   <tr key={item.id} className="transition hover:bg-slate-50">
-                    <td className="px-5 py-3 text-sm text-slate-400">{item.line_number}</td>
-                    <td className="px-5 py-3 text-sm text-slate-900">{item.description || '-'}</td>
-                    <td className="px-5 py-3 text-right text-sm text-slate-700">{item.quantity ?? '-'}</td>
-                    <td className="px-5 py-3 text-right text-sm text-slate-700">
+                    <td className="px-4 py-3 text-sm text-slate-400">{item.line_number}</td>
+                    <td className="px-4 py-3 text-sm text-slate-900">{item.description || '-'}</td>
+                    <td className="px-4 py-3 text-right text-sm text-slate-700">{item.quantity ?? '-'}</td>
+                    <td className="px-4 py-3 text-right text-sm text-slate-700">
                       {formatRate(item.unit_price, item.quantity)}
                     </td>
-                    <td className="px-5 py-3 text-right text-sm font-semibold text-slate-900">
+                    <td className="px-4 py-3 text-right text-sm font-semibold text-slate-900">
                       {money(item.total_price)}
                     </td>
                   </tr>
