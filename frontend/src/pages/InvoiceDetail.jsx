@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { StatusPill, ConfidenceBar, KpiChip, FieldConfidenceMiniChart } from '../components/ui'
+import {
+  StatusPill,
+  ConfidenceBar,
+  KpiChip,
+  FieldConfidenceMiniChart,
+} from '../components/ui'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import {
@@ -16,12 +21,10 @@ import {
   Check,
   Folder,
   Download,
+  Sparkles,
+  Eye,
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STATUS CONFIG
-// ─────────────────────────────────────────────────────────────────────────────
 
 const STATUS_STYLES = {
   uploaded: 'bg-gray-100 text-gray-700',
@@ -47,13 +50,6 @@ const STEPS = [
 
 const STEP_ORDER = ['preprocessed', 'ocr_complete', 'extraction_complete', 'validated']
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SANITIZATION LAYER
-// These helpers defend against malformed extractor output: concatenated
-// fields, trailing labels, and missing values. They let the preview render
-// correctly even when the backend returns garbage.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const getFieldValue = (fields, name) => {
   const field = fields.find((f) => f.field_name === name)
   return field?.validated_value ?? field?.normalized_value ?? field?.raw_value ?? ''
@@ -64,8 +60,6 @@ const cleanText = (value) => {
   return String(value).replace(/\s+/g, ' ').trim()
 }
 
-// Known "noise" phrases that commonly bleed in from adjacent cells.
-// Matching is case-insensitive and only the LEADING portion is kept.
 const TRAILING_LABEL_PATTERNS = [
   /\s+Tariff\s+Type\b.*$/i,
   /\s+Invoice\s+Date\b.*$/i,
@@ -80,12 +74,6 @@ const TRAILING_LABEL_PATTERNS = [
   /\s+Supply\s+Address\b.*$/i,
 ]
 
-/**
- * Remove any trailing "label + value" garbage that was glued onto the
- * end of a field during extraction. For example:
- *   "05/03/2026 Restaurant"                   → "05/03/2026"
- *   "01/02/2026 to 28/02/2026 Tariff Type ..." → "01/02/2026 to 28/02/2026"
- */
 const stripTrailingLabels = (value) => {
   let out = cleanText(value)
   for (const pattern of TRAILING_LABEL_PATTERNS) {
@@ -94,10 +82,6 @@ const stripTrailingLabels = (value) => {
   return out
 }
 
-/**
- * Pull a DD/MM/YYYY (or YYYY-MM-DD) out of a value and discard anything
- * that follows. Handles bled dates like "05/03/2026 Restaurant".
- */
 const cleanDate = (value) => {
   const text = cleanText(value)
   if (!text) return ''
@@ -111,10 +95,6 @@ const cleanDate = (value) => {
   return stripTrailingLabels(text)
 }
 
-/**
- * Pull a full billing period ("DD/MM/YYYY to DD/MM/YYYY") out of a value
- * and discard trailing garbage (e.g. "Tariff Type General Business").
- */
 const cleanBillingPeriod = (value) => {
   const text = cleanText(value)
   if (!text) return ''
@@ -127,12 +107,6 @@ const cleanBillingPeriod = (value) => {
   return stripTrailingLabels(text)
 }
 
-/**
- * Scan a bled value for a known label phrase (e.g. "Tariff Type") and
- * return the tail portion as a separately-derivable value.
- *   "01/02/2026 to 28/02/2026 Tariff Type General Business"
- *     → { head: "01/02/2026 to 28/02/2026", tail: "General Business" }
- */
 const extractBledTail = (value, labelRegex) => {
   const text = cleanText(value)
   const m = text.match(labelRegex)
@@ -184,7 +158,6 @@ const textOrDash = (value) => {
   return text || '-'
 }
 
-// Parse a money-ish string to a number, or null if unparseable.
 const parseMoney = (value) => {
   if (value == null || value === '' || value === '-') return null
   const cleaned = String(value).replace(/[^0-9.-]/g, '')
@@ -233,10 +206,6 @@ const formatRate = (rate, quantity) => {
   return `$${num.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}${suffix}`
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PREVIEW STYLE
-// ─────────────────────────────────────────────────────────────────────────────
-
 const getPreviewStyle = () => ({
   subtitle: 'Billing Statement',
   infoTitle: 'Customer & Site Information',
@@ -245,25 +214,14 @@ const getPreviewStyle = () => ({
   siteLabel: 'Site',
   addressLabel: 'Address',
   meterLabel: 'Meter ID',
-  accent: '#0d7f7a',
-  sectionBg: '#e9f2f2',
-  tableHeaderBg: '#2f9e9e',
-  summaryBg: '#f4f4f4',
+  accent: '#0f766e',
+  sectionBg: '#ecfeff',
+  tableHeaderBg: '#0f766e',
+  summaryBg: '#f8fafc',
   accountTitle: 'ACCOUNT',
   totalLabel: 'TOTAL',
 })
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DERIVED VALUES
-// Helpers that synthesise values the extractor failed to produce.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * If backend returned NO line items, but we have enough raw field data
- * to reconstruct them (e.g. peak_usage / off_peak_usage / total_usage
- * quantities + rates), synthesise a minimal line-item list so the
- * Charges Summary table isn't empty.
- */
 const synthesiseLineItems = (fields) => {
   const rows = []
 
@@ -288,15 +246,6 @@ const synthesiseLineItems = (fields) => {
   return rows
 }
 
-/**
- * Compute (or correct) the grand total.
- *  - If backend total equals subtotal and GST is non-zero, the backend
- *    almost certainly mapped the subtotal value into total_amount. In
- *    that case we return subtotal + gst.
- *  - If backend total is missing but subtotal + gst are present, return
- *    their sum.
- *  - Otherwise return the backend value unchanged.
- */
 const reconcileTotal = (subtotalRaw, gstRaw, totalRaw) => {
   const subtotal = parseMoney(subtotalRaw)
   const gst = parseMoney(gstRaw)
@@ -317,10 +266,6 @@ const reconcileTotal = (subtotalRaw, gstRaw, totalRaw) => {
   return { value: '-', corrected: false }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INVOICE PREVIEW CARD
-// ─────────────────────────────────────────────────────────────────────────────
-
 function InvoicePreviewCard({
   extractedFields,
   lineItems,
@@ -330,8 +275,7 @@ function InvoicePreviewCard({
 }) {
   const ui = getPreviewStyle()
 
-  const getFieldObj = (...names) =>
-    extractedFields.find((f) => names.includes(f.field_name))
+  const getFieldObj = (...names) => extractedFields.find((f) => names.includes(f.field_name))
 
   const vendorName =
     safeShortField(extractedFields, 'vendor_name') ||
@@ -345,13 +289,11 @@ function InvoicePreviewCard({
     safeShortField(extractedFields, 'invoice_id', '', 40) ||
     '-'
 
-  // ── Dates: always strip trailing garbage ──
   const invoiceDateRaw = getFieldValue(extractedFields, 'invoice_date')
   const dueDateRaw = getFieldValue(extractedFields, 'due_date')
   const invoiceDate = cleanDate(invoiceDateRaw) || '-'
   const dueDate = cleanDate(dueDateRaw) || '-'
 
-  // ── Billing period: split off any trailing "Tariff Type …" tail ──
   const billingPeriodRaw = safeField(extractedFields, 'billing_period', '')
   const { head: billingPeriodClean, tail: billingPeriodTail } = extractBledTail(
     billingPeriodRaw,
@@ -359,8 +301,6 @@ function InvoicePreviewCard({
   )
   const billingPeriod = cleanBillingPeriod(billingPeriodClean) || '-'
 
-  // ── Site / customer / address. If invoice_date bled with a site type
-  //    word, recover it as a site fallback. ──
   const invoiceDateTail = cleanText(invoiceDateRaw).replace(cleanDate(invoiceDateRaw), '').trim()
 
   const customerName =
@@ -380,7 +320,6 @@ function InvoicePreviewCard({
     safeField(extractedFields, 'property_address', '') ||
     '-'
 
-  // ── Tariff type: fall back to whatever was bled off billing_period ──
   const tariffType =
     safeShortField(extractedFields, 'tariff_type', '', 60) ||
     safeShortField(extractedFields, 'plan_name', '', 60) ||
@@ -407,7 +346,6 @@ function InvoicePreviewCard({
   const subtotal = subtotalRaw || '-'
   const gst = gstRaw || '-'
 
-  // ── Line items: clean, then synthesise if backend returned none ──
   let cleanedLineItems = (lineItems || [])
     .filter((item) => {
       const desc = cleanText(item.description)
@@ -445,7 +383,7 @@ function InvoicePreviewCard({
       <button
         type="button"
         onClick={() => onEditField(field)}
-        className={`text-left hover:bg-yellow-50 rounded px-1 -mx-1 transition ${className}`}
+        className={`rounded px-1 text-left transition hover:bg-amber-50 ${className}`}
         title="Click to edit"
       >
         {displayValue}
@@ -454,32 +392,30 @@ function InvoicePreviewCard({
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40 flex items-center justify-between">
+    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Click a value to edit it</p>
+          <h2 className="text-sm font-semibold text-slate-900">Invoice preview</h2>
+          <p className="text-xs text-slate-500">Click a value to edit it</p>
         </div>
+
         {totalWasCorrected && (
-          <span
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200"
-            title="The extractor's total didn't match Subtotal + GST. Showing the reconciled figure."
-          >
-            <AlertCircle className="w-3 h-3" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+            <AlertCircle className="h-3.5 w-3.5" />
             total auto-reconciled
           </span>
         )}
       </div>
 
-      <div className="p-4 md:p-8 bg-gray-50">
+      <div className="bg-slate-50 p-3 sm:p-5 lg:p-6">
         <div
           ref={previewRef}
-          className="mx-auto max-w-5xl bg-[#f8f8f5] border border-gray-200 shadow-sm px-5 py-6 md:px-8 md:py-8"
+          className="mx-auto max-w-5xl border border-slate-200 bg-[#fafaf7] px-4 py-5 shadow-sm sm:px-8 sm:py-8"
         >
           <div className="mb-6">
             <div className="text-center">
               <h1
-                className="text-[28px] leading-tight font-bold tracking-wide"
+                className="text-[28px] font-bold leading-tight tracking-wide"
                 style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
               >
                 <EditableValue
@@ -489,7 +425,7 @@ function InvoicePreviewCard({
               </h1>
             </div>
 
-            <div className="mt-3 text-left text-[15px] leading-7 text-gray-900">
+            <div className="mt-3 text-left text-[15px] leading-7 text-slate-900">
               <div>{ui.subtitle}</div>
               <div>
                 ABN: <EditableValue fieldNames="abn" displayValue={textOrDash(abn)} />
@@ -498,59 +434,42 @@ function InvoicePreviewCard({
           </div>
 
           <div
-            className="border text-center font-bold text-[18px] py-2 mb-6"
+            className="mb-6 border py-2 text-center text-[18px] font-bold"
             style={{ color: ui.accent, borderColor: ui.accent }}
           >
             {ui.accountTitle}
           </div>
 
-          <div className="border border-gray-400 bg-white mb-8 overflow-hidden">
+          <div className="mb-8 overflow-hidden border border-slate-400 bg-white">
             <table className="w-full border-collapse text-[15px]">
               <tbody>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
-                    Invoice ID
-                  </td>
-                  <td className="border border-gray-300 px-3 py-2 w-[30%]">
+                  <td className="border border-slate-300 px-3 py-2 font-medium w-[20%]">Invoice ID</td>
+                  <td className="border border-slate-300 px-3 py-2 w-[30%]">
                     <EditableValue
                       fieldNames={['invoice_number', 'invoice_id']}
                       displayValue={textOrDash(invoiceNumber)}
                     />
                   </td>
-                  <td className="border border-gray-300 px-3 py-2 font-medium w-[20%]">
-                    Invoice Date
-                  </td>
-                  <td className="border border-gray-300 px-3 py-2 w-[30%]">
-                    <EditableValue
-                      fieldNames="invoice_date"
-                      displayValue={formatDate(invoiceDate)}
-                    />
+                  <td className="border border-slate-300 px-3 py-2 font-medium w-[20%]">Invoice Date</td>
+                  <td className="border border-slate-300 px-3 py-2 w-[30%]">
+                    <EditableValue fieldNames="invoice_date" displayValue={formatDate(invoiceDate)} />
                   </td>
                 </tr>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">
-                    Billing Period
+                  <td className="border border-slate-300 px-3 py-2 font-medium">Billing Period</td>
+                  <td className="border border-slate-300 px-3 py-2">
+                    <EditableValue fieldNames="billing_period" displayValue={textOrDash(billingPeriod)} />
                   </td>
-                  <td className="border border-gray-300 px-3 py-2">
-                    <EditableValue
-                      fieldNames="billing_period"
-                      displayValue={textOrDash(billingPeriod)}
-                    />
-                  </td>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">Due Date</td>
-                  <td className="border border-gray-300 px-3 py-2">
-                    <EditableValue
-                      fieldNames="due_date"
-                      displayValue={formatDate(dueDate)}
-                    />
+                  <td className="border border-slate-300 px-3 py-2 font-medium">Due Date</td>
+                  <td className="border border-slate-300 px-3 py-2">
+                    <EditableValue fieldNames="due_date" displayValue={formatDate(dueDate)} />
                   </td>
                 </tr>
                 {tariffType !== '-' && (
                   <tr>
-                    <td className="border border-gray-300 px-3 py-2 font-medium">
-                      Tariff Type
-                    </td>
-                    <td className="border border-gray-300 px-3 py-2" colSpan={3}>
+                    <td className="border border-slate-300 px-3 py-2 font-medium">Tariff Type</td>
+                    <td className="border border-slate-300 px-3 py-2" colSpan={3}>
                       <EditableValue
                         fieldNames={['tariff_type', 'plan_name', 'service_type']}
                         displayValue={textOrDash(tariffType)}
@@ -564,22 +483,22 @@ function InvoicePreviewCard({
 
           <div className="mb-10">
             <h3
-              className="font-bold text-[18px] mb-3"
+              className="mb-3 text-[18px] font-bold"
               style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
             >
               {ui.infoTitle}
             </h3>
 
-            <table className="w-full border-collapse text-[15px] bg-white">
+            <table className="w-full border-collapse bg-white text-[15px]">
               <tbody>
                 <tr>
                   <td
-                    className="border border-gray-300 px-3 py-2 font-medium w-[25%]"
+                    className="w-[25%] border border-slate-300 px-3 py-2 font-medium"
                     style={{ backgroundColor: ui.sectionBg }}
                   >
                     {ui.customerLabel}
                   </td>
-                  <td className="border border-gray-300 px-3 py-2">
+                  <td className="border border-slate-300 px-3 py-2">
                     <EditableValue
                       fieldNames={['customer_name', 'company_name']}
                       displayValue={textOrDash(customerName)}
@@ -588,12 +507,12 @@ function InvoicePreviewCard({
                 </tr>
                 <tr>
                   <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
+                    className="border border-slate-300 px-3 py-2 font-medium"
                     style={{ backgroundColor: ui.sectionBg }}
                   >
                     {ui.siteLabel}
                   </td>
-                  <td className="border border-gray-300 px-3 py-2">
+                  <td className="border border-slate-300 px-3 py-2">
                     <EditableValue
                       fieldNames={['site_name', 'property_type']}
                       displayValue={textOrDash(siteName)}
@@ -602,12 +521,12 @@ function InvoicePreviewCard({
                 </tr>
                 <tr>
                   <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
+                    className="border border-slate-300 px-3 py-2 font-medium"
                     style={{ backgroundColor: ui.sectionBg }}
                   >
                     {ui.addressLabel}
                   </td>
-                  <td className="border border-gray-300 px-3 py-2 break-words">
+                  <td className="border border-slate-300 px-3 py-2 break-words">
                     <EditableValue
                       fieldNames={['supply_address', 'property_address']}
                       displayValue={textOrDash(supplyAddress)}
@@ -616,12 +535,12 @@ function InvoicePreviewCard({
                 </tr>
                 <tr>
                   <td
-                    className="border border-gray-300 px-3 py-2 font-medium"
+                    className="border border-slate-300 px-3 py-2 font-medium"
                     style={{ backgroundColor: ui.sectionBg }}
                   >
                     {ui.meterLabel}
                   </td>
-                  <td className="border border-gray-300 px-3 py-2">
+                  <td className="border border-slate-300 px-3 py-2">
                     <EditableValue fieldNames="meter_id" displayValue={textOrDash(meterId)} />
                   </td>
                 </tr>
@@ -631,52 +550,41 @@ function InvoicePreviewCard({
 
           <div className="mb-6">
             <h3
-              className="font-bold text-[18px] mb-3"
+              className="mb-3 text-[18px] font-bold"
               style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
             >
               {ui.chargesTitle}
             </h3>
 
             {lineItemsAreSynthesised && (
-              <p className="text-[11px] text-amber-600 mb-1">
+              <p className="mb-2 text-[11px] text-amber-600">
                 Line items reconstructed from field-level extractions.
               </p>
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-[15px] bg-white">
+              <table className="w-full border-collapse bg-white text-[15px]">
                 <thead>
                   <tr style={{ backgroundColor: ui.tableHeaderBg }} className="text-white">
-                    <th className="border border-gray-400 px-3 py-2 text-left">Description</th>
-                    <th className="border border-gray-400 px-3 py-2 text-left">Usage</th>
-                    <th className="border border-gray-400 px-3 py-2 text-left">Rate</th>
-                    <th className="border border-gray-400 px-3 py-2 text-right">Amount</th>
+                    <th className="border border-slate-400 px-3 py-2 text-left">Description</th>
+                    <th className="border border-slate-400 px-3 py-2 text-left">Usage</th>
+                    <th className="border border-slate-400 px-3 py-2 text-left">Rate</th>
+                    <th className="border border-slate-400 px-3 py-2 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cleanedLineItems.length > 0 ? (
                     cleanedLineItems.map((item) => (
                       <tr key={item.id}>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {textOrDash(item.description)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {textOrDash(item.quantity)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2">
-                          {formatRate(item.unit_price, item.quantity)}
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2 text-right">
-                          {money(item.total_price)}
-                        </td>
+                        <td className="border border-slate-300 px-3 py-2">{textOrDash(item.description)}</td>
+                        <td className="border border-slate-300 px-3 py-2">{textOrDash(item.quantity)}</td>
+                        <td className="border border-slate-300 px-3 py-2">{formatRate(item.unit_price, item.quantity)}</td>
+                        <td className="border border-slate-300 px-3 py-2 text-right">{money(item.total_price)}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td
-                        className="border border-gray-300 px-3 py-3 text-gray-400 italic"
-                        colSpan={4}
-                      >
+                      <td className="border border-slate-300 px-3 py-3 italic text-slate-400" colSpan={4}>
                         No line items extracted
                       </td>
                     </tr>
@@ -687,40 +595,29 @@ function InvoicePreviewCard({
           </div>
 
           <div className="flex justify-center">
-            <table
-              className="w-full max-w-xl border-collapse text-[15px]"
-              style={{ backgroundColor: ui.summaryBg }}
-            >
+            <table className="w-full max-w-xl border-collapse text-[15px]" style={{ backgroundColor: ui.summaryBg }}>
               <tbody>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">Subtotal</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">
+                  <td className="border border-slate-300 px-3 py-2 font-medium">Subtotal</td>
+                  <td className="border border-slate-300 px-3 py-2 text-right">
                     <EditableValue fieldNames="subtotal" displayValue={money(subtotal)} />
                   </td>
                 </tr>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-medium">GST (10%)</td>
-                  <td className="border border-gray-300 px-3 py-2 text-right">
-                    <EditableValue
-                      fieldNames={['tax_amount', 'gst']}
-                      displayValue={money(gst)}
-                    />
+                  <td className="border border-slate-300 px-3 py-2 font-medium">GST (10%)</td>
+                  <td className="border border-slate-300 px-3 py-2 text-right">
+                    <EditableValue fieldNames={['tax_amount', 'gst']} displayValue={money(gst)} />
                   </td>
                 </tr>
                 <tr>
-                  <td className="border border-gray-300 px-3 py-2 font-bold">
-                    {ui.totalLabel}
-                  </td>
-                  <td className="border border-gray-300 px-3 py-2 text-right font-bold">
+                  <td className="border border-slate-300 px-3 py-2 font-bold">{ui.totalLabel}</td>
+                  <td className="border border-slate-300 px-3 py-2 text-right font-bold">
                     <EditableValue
                       fieldNames={['total_amount', 'total_amount_due']}
                       displayValue={money(reconciledTotal)}
                     />
                     {totalWasCorrected && (
-                      <span
-                        className="ml-2 text-[10px] font-semibold text-amber-600 align-middle"
-                        title="Reconciled from Subtotal + GST"
-                      >
+                      <span className="ml-2 align-middle text-[10px] font-semibold text-amber-600">
                         ✓ reconciled
                       </span>
                     )}
@@ -730,7 +627,7 @@ function InvoicePreviewCard({
             </table>
           </div>
 
-          <div className="mt-8 text-xs text-gray-400">
+          <div className="mt-8 text-xs text-slate-400">
             Preview generated from backend extracted fields for {invoice?.original_filename}
           </div>
         </div>
@@ -739,73 +636,65 @@ function InvoicePreviewCard({
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FIELD SECTION CONFIG
-// ─────────────────────────────────────────────────────────────────────────────
-
 const FIELD_SECTIONS = [
   {
-    id:     'amounts',
-    title:  'Amounts',
+    id: 'amounts',
+    title: 'Amounts',
     fields: ['total_amount', 'subtotal', 'tax_amount'],
-    align:  'right',
+    align: 'right',
   },
   {
-    id:     'details',
-    title:  'Invoice Details',
+    id: 'details',
+    title: 'Invoice Details',
     fields: ['invoice_number', 'invoice_date', 'due_date', 'billing_period', 'vendor_name'],
-    align:  'left',
+    align: 'left',
   },
   {
-    id:     'customer',
-    title:  'Customer & Site',
+    id: 'customer',
+    title: 'Customer & Site',
     fields: ['customer_name', 'site_name', 'supply_address', 'meter_id', 'abn'],
-    align:  'left',
+    align: 'left',
   },
 ]
 
-const KNOWN_FIELDS = new Set(FIELD_SECTIONS.flatMap(s => s.fields))
-
-// ── Method pill helpers ───────────────────────────────────────────────────────
+const KNOWN_FIELDS = new Set(FIELD_SECTIONS.flatMap((s) => s.fields))
 
 const METHOD_STYLE = {
-  cluster_rule:   { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
-  agent_learned:  { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
-  llm_extraction: { label: 'llm',           cls: 'bg-blue-100   text-blue-700'   },
-  llm:            { label: 'llm',           cls: 'bg-blue-100   text-blue-700'   },
-  'llm+gnn':      { label: 'llm + gnn',     cls: 'bg-indigo-100 text-indigo-700' },
-  gnn:            { label: 'gnn',           cls: 'bg-indigo-100 text-indigo-700' },
-  row_label:      { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
-  summary_label:  { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
-  vendor_top:     { label: 'layout',        cls: 'bg-cyan-100   text-cyan-700'   },
-  regex:          { label: 'regex',         cls: 'bg-gray-100   text-gray-500'   },
-  position_based: { label: 'position',      cls: 'bg-gray-100   text-gray-500'   },
+  cluster_rule: { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
+  agent_learned: { label: 'agent learned', cls: 'bg-violet-100 text-violet-700' },
+  llm_extraction: { label: 'llm', cls: 'bg-blue-100 text-blue-700' },
+  llm: { label: 'llm', cls: 'bg-blue-100 text-blue-700' },
+  'llm+gnn': { label: 'llm + gnn', cls: 'bg-indigo-100 text-indigo-700' },
+  gnn: { label: 'gnn', cls: 'bg-indigo-100 text-indigo-700' },
+  row_label: { label: 'layout', cls: 'bg-cyan-100 text-cyan-700' },
+  summary_label: { label: 'layout', cls: 'bg-cyan-100 text-cyan-700' },
+  vendor_top: { label: 'layout', cls: 'bg-cyan-100 text-cyan-700' },
+  regex: { label: 'regex', cls: 'bg-gray-100 text-gray-500' },
+  position_based: { label: 'position', cls: 'bg-gray-100 text-gray-500' },
 }
 
 function MethodPill({ method }) {
   const cfg = METHOD_STYLE[method] ?? { label: method ?? '—', cls: 'bg-gray-100 text-gray-500' }
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold leading-tight ${cfg.cls}`}>
+    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight ${cfg.cls}`}>
       {cfg.label}
     </span>
   )
 }
 
-// ── Inline edit controls ──────────────────────────────────────────────────────
-
 function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }) {
   return (
-    <div className="flex items-center gap-1.5 mt-1">
+    <div className="mt-1 flex items-center gap-1.5">
       <input
         type="text"
         value={editValue}
-        onChange={e => setEditValue(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter')  onSave(field)
+        onChange={(e) => setEditValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onSave(field)
           if (e.key === 'Escape') onCancel()
         }}
         aria-label={`Edit ${field.field_name.replace(/_/g, ' ')}`}
-        className="flex-1 px-2.5 py-1 text-sm border border-blue-400 rounded-lg focus:outline-none field-edit-active min-w-0"
+        className="field-edit-active min-w-0 flex-1 rounded-xl border border-blue-400 px-3 py-2 text-sm outline-none"
         autoFocus
       />
       <button
@@ -813,42 +702,46 @@ function InlineEdit({ field, editValue, setEditValue, saving, onSave, onCancel }
         disabled={saving}
         title="Save"
         aria-label="Save edit"
-        className="p-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors flex-shrink-0"
+        className="flex-shrink-0 rounded-lg bg-blue-600 p-2 text-white transition hover:bg-blue-700 disabled:opacity-50"
       >
-        <Check className="w-3.5 h-3.5" />
+        <Check className="h-3.5 w-3.5" />
       </button>
       <button
         onClick={onCancel}
         title="Cancel"
         aria-label="Cancel edit"
-        className="p-1 border border-gray-200 text-gray-500 rounded-md hover:bg-gray-50 transition-colors flex-shrink-0"
+        className="flex-shrink-0 rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
       >
-        <X className="w-3.5 h-3.5" />
+        <X className="h-3.5 w-3.5" />
       </button>
     </div>
   )
 }
 
-// ── Single field row ──────────────────────────────────────────────────────────
-
-function FieldRow({ field, align, editingFieldId, editValue, setEditValue, saving, onEdit, onSave, onCancel }) {
+function FieldRow({
+  field,
+  align,
+  editingFieldId,
+  editValue,
+  setEditValue,
+  saving,
+  onEdit,
+  onSave,
+  onCancel,
+}) {
   const isEditing = editingFieldId === field.id
   const displayValue = field.validated_value ?? field.normalized_value ?? field.raw_value
 
   return (
-    <div className="group py-2.5 first:pt-0 last:pb-0">
-      {/* Label + validated badge */}
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide leading-none">
+    <div className="py-3 first:pt-0 last:pb-0">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           {field.field_name.replace(/_/g, ' ')}
         </span>
         <div className="flex items-center gap-1">
           {field.is_validated && (
-            <span
-              aria-label="Field has been validated"
-              className="flex items-center gap-0.5 text-[10px] text-emerald-600 font-semibold"
-            >
-              <CheckCircle className="w-3 h-3" aria-hidden="true" />
+            <span className="flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600">
+              <CheckCircle className="h-3 w-3" />
               validated
             </span>
           )}
@@ -856,7 +749,6 @@ function FieldRow({ field, align, editingFieldId, editValue, setEditValue, savin
         </div>
       </div>
 
-      {/* Value */}
       {isEditing ? (
         <InlineEdit
           field={field}
@@ -870,62 +762,55 @@ function FieldRow({ field, align, editingFieldId, editValue, setEditValue, savin
         <button
           type="button"
           onClick={() => onEdit(field)}
-          aria-label={`Edit ${field.field_name.replace(/_/g, ' ')}: ${displayValue ?? 'empty'}`}
           className={[
-            'w-full text-left rounded-lg px-2.5 py-1.5 transition-all duration-150',
-            'hover:ring-2 hover:ring-blue-200 hover:bg-white cursor-pointer',
-            'focus-visible:ring-2 focus-visible:ring-blue-400 outline-none',
+            'w-full rounded-xl px-3 py-2 text-left transition hover:bg-white hover:ring-2 hover:ring-blue-200',
             align === 'right' ? 'text-right' : '',
           ].join(' ')}
         >
           {displayValue ? (
-            <span className={`text-sm font-semibold text-gray-900 ${align === 'right' ? 'font-mono tabular-nums' : ''}`}>
+            <span
+              className={`text-sm font-semibold text-slate-900 ${
+                align === 'right' ? 'font-mono tabular-nums' : ''
+              }`}
+            >
               {displayValue}
             </span>
           ) : (
-            <span className="text-xs text-gray-300 italic">not extracted</span>
+            <span className="text-xs italic text-slate-300">not extracted</span>
           )}
         </button>
       )}
 
-      {/* Confidence bar */}
       {field.confidence_score != null && (
-        <ConfidenceBar
-          value={field.confidence_score}
-          showLabel
-          className="mt-1.5"
-        />
+        <ConfidenceBar value={field.confidence_score} showLabel className="mt-1.5" />
       )}
     </div>
   )
 }
 
-// ── Inline GST & total check ──────────────────────────────────────────────────
-
 function computeGstStatus(fields) {
-  const find = name => {
-    const f = fields.find(f => f.field_name === name)
+  const find = (name) => {
+    const f = fields.find((f) => f.field_name === name)
     return parseFloat((f?.validated_value ?? f?.normalized_value ?? f?.raw_value ?? '').replace(/[^0-9.]/g, '')) || null
   }
+
   const subtotal = find('subtotal')
-  const tax      = find('tax_amount')
-  const total    = find('total_amount')
+  const tax = find('tax_amount')
+  const total = find('total_amount')
   if (!subtotal || !tax) return null
 
   const expectedTax = subtotal * 0.1
-  const gstOk = Math.abs(tax - expectedTax) / expectedTax < 0.05   // within 5 %
+  const gstOk = Math.abs(tax - expectedTax) / expectedTax < 0.05
 
-  // Also flag total mismatch: expected = subtotal + tax
   const expectedTotal = subtotal + tax
   const totalOk = total == null ? true : Math.abs(total - expectedTotal) / expectedTotal < 0.01
 
-  const hasRetention = fields.some(f =>
+  const hasRetention = fields.some((f) =>
     (f.validated_value ?? f.normalized_value ?? f.raw_value ?? '').toLowerCase().includes('retention')
   )
+
   return { ok: gstOk, totalOk, hasRetention }
 }
-
-// ── ExtractedFieldsPanel ──────────────────────────────────────────────────────
 
 function ExtractedFieldsPanel({
   fields,
@@ -940,20 +825,17 @@ function ExtractedFieldsPanel({
   isActivelyProcessing,
   processing,
   avgConfidence,
-  greenKpiData,
-  greenKpiLoading,
 }) {
   if (!fields.length) {
     return (
       <div
-        className="bg-white rounded-xl shadow-sm p-6 flex flex-col items-center justify-center text-center"
-        style={{ minHeight: '220px' }}
+        className="flex min-h-[240px] flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm"
         aria-label="Extracted fields — empty"
       >
-        <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center mb-3">
-          <FileText className="w-6 h-6 text-blue-300 animate-float" aria-hidden="true" />
+        <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-3xl bg-blue-50">
+          <FileText className="h-7 w-7 text-blue-300" />
         </div>
-        <p className="text-sm font-medium text-gray-500">
+        <p className="text-sm font-medium text-slate-600">
           {canProcess
             ? 'Click "Process Invoice" to extract fields'
             : isActivelyProcessing || processing
@@ -964,112 +846,89 @@ function ExtractedFieldsPanel({
     )
   }
 
-  // Build section → field lookup
-  const byName = Object.fromEntries(fields.map(f => [f.field_name, f]))
-  const otherFields = fields.filter(f => !KNOWN_FIELDS.has(f.field_name))
-
+  const byName = Object.fromEntries(fields.map((f) => [f.field_name, f]))
+  const otherFields = fields.filter((f) => !KNOWN_FIELDS.has(f.field_name))
   const gst = computeGstStatus(fields)
 
-  const sharedRowProps = { editingFieldId, editValue, setEditValue, saving, onEdit, onSave, onCancel }
+  const sharedRowProps = {
+    editingFieldId,
+    editValue,
+    setEditValue,
+    saving,
+    onEdit,
+    onSave,
+    onCancel,
+  }
 
   return (
-    <aside
-      className="bg-white rounded-xl shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
-      style={{ animationDelay: '0.05s' }}
-      aria-label="Extracted fields panel"
-    >
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+    <aside className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
         <div>
-          <h2 className="text-sm font-bold text-gray-900">Extracted Fields</h2>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            Tap any value to edit &amp; validate
-          </p>
+          <h2 className="text-sm font-semibold text-slate-900">Extracted fields</h2>
+          <p className="text-xs text-slate-500">Tap any value to edit and validate</p>
         </div>
         {avgConfidence !== null && (
-          <div className="text-right flex-shrink-0 ml-3">
-            <p className="text-base font-bold text-blue-600 leading-none tabular-nums">
-              {avgConfidence}%
-            </p>
-            <p className="text-[10px] text-gray-400">avg conf.</p>
+          <div className="ml-3 text-right">
+            <p className="text-lg font-bold leading-none text-blue-600">{avgConfidence}%</p>
+            <p className="text-[10px] text-slate-500">avg conf.</p>
           </div>
         )}
       </div>
 
-      {/* Mini overall confidence bar */}
       {avgConfidence !== null && (
-        <div className="px-4 pt-3 pb-1">
+        <div className="px-5 pb-1 pt-3">
           <ConfidenceBar value={avgConfidence / 100} showLabel={false} className="w-full" />
         </div>
       )}
 
-      {/* Field sections */}
-      <div className="px-4 pb-3 divide-y divide-gray-100">
-        {FIELD_SECTIONS.map(section => {
-          const sectionFields = section.fields
-            .map(name => byName[name])
-            .filter(Boolean)
+      <div className="px-5 pb-4">
+        {FIELD_SECTIONS.map((section) => {
+          const sectionFields = section.fields.map((name) => byName[name]).filter(Boolean)
           if (!sectionFields.length) return null
 
           return (
-            <div key={section.id} className="py-3 first:pt-2">
-              <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
+            <div key={section.id} className="border-b border-slate-100 py-4 last:border-b-0">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
                 {section.title}
               </p>
-              <div className="divide-y divide-gray-50">
-                {sectionFields.map(field => (
-                  <FieldRow
-                    key={field.id}
-                    field={field}
-                    align={section.align}
-                    {...sharedRowProps}
-                  />
+              <div className="divide-y divide-slate-50">
+                {sectionFields.map((field) => (
+                  <FieldRow key={field.id} field={field} align={section.align} {...sharedRowProps} />
                 ))}
               </div>
             </div>
           )
         })}
 
-        {/* Other / uncategorised fields */}
         {otherFields.length > 0 && (
-          <div className="py-3">
-            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
+          <div className="py-4">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
               Other
             </p>
-            <div className="divide-y divide-gray-50">
-              {otherFields.map(field => (
-                <FieldRow
-                  key={field.id}
-                  field={field}
-                  align="left"
-                  {...sharedRowProps}
-                />
+            <div className="divide-y divide-slate-50">
+              {otherFields.map((field) => (
+                <FieldRow key={field.id} field={field} align="left" {...sharedRowProps} />
               ))}
             </div>
           </div>
         )}
       </div>
 
-      {/* Per-field confidence mini chart */}
-      {fields.some(f => f.confidence_score != null) && (
-        <div className="px-4 pt-2 pb-3 border-t border-gray-100">
-          <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">
-            Field Confidence
+      {fields.some((f) => f.confidence_score != null) && (
+        <div className="border-t border-slate-100 px-5 py-4">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+            Field confidence
           </p>
           <FieldConfidenceMiniChart fields={fields} height={Math.max(28 * 4, 120)} />
         </div>
       )}
 
-      {/* KPI strip */}
       {gst !== null && (
-        <div
-          className="px-4 py-3 border-t border-gray-100 bg-gray-50/50 flex flex-wrap gap-1.5"
-          aria-label="Compliance flags"
-        >
+        <div className="flex flex-wrap gap-1.5 border-t border-slate-100 bg-slate-50/70 px-5 py-4">
           <KpiChip type={gst.ok ? 'gst_ok' : 'gst_issue'} />
           {!gst.totalOk && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200">
-              <AlertCircle className="w-3 h-3" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+              <AlertCircle className="h-3 w-3" />
               total mismatch
             </span>
           )}
@@ -1080,62 +939,39 @@ function ExtractedFieldsPanel({
   )
 }
 
-// ── OCR collapsible ───────────────────────────────────────────────────────────
-
 function OcrCollapsible({ ocrResults }) {
   const [open, setOpen] = useState(false)
 
   if (!ocrResults?.length) return null
 
-  const result   = ocrResults[0]
-  const engine   = result.ocr_engine ?? 'OCR'
-  const confPct  = result.confidence_score != null
-    ? `${Math.round(result.confidence_score * 100)}% confidence`
-    : null
-  const timing   = result.processing_time_ms != null
-    ? `${result.processing_time_ms}ms`
-    : null
+  const result = ocrResults[0]
+  const engine = result.ocr_engine ?? 'OCR'
+  const confPct = result.confidence_score != null ? `${Math.round(result.confidence_score * 100)}% confidence` : null
+  const timing = result.processing_time_ms != null ? `${result.processing_time_ms}ms` : null
 
   const meta = [engine, confPct, timing].filter(Boolean).join(' · ')
 
   return (
-    <div
-      className="bg-white rounded-2xl border border-gray-200 shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200"
-      style={{ animationDelay: '0.3s' }}
-    >
-      {/* ── Header / toggle button ── */}
+    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-controls="ocr-body"
-        className="w-full px-6 py-4 flex items-center justify-between
-                   hover:bg-gray-50 transition-colors duration-150 rounded-2xl
-                   focus-visible:ring-2 focus-visible:ring-blue-400 outline-none"
+        className="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-slate-50"
       >
-        <div className="text-left">
-          <h2 className="text-base font-bold text-gray-900">OCR Raw Text</h2>
-          <p className="text-xs text-gray-400 mt-0.5">{meta}</p>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">OCR raw text</h2>
+          <p className="text-xs text-slate-500">{meta}</p>
         </div>
 
-        <ChevronDown
-          aria-hidden="true"
-          className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
-        />
+        <ChevronDown className={`h-5 w-5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {/* ── Collapsible body — grid-rows trick gives smooth height animation ── */}
-      <div
-        id="ocr-body"
-        className={`grid transition-all duration-300 ease-in-out ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
-      >
+      <div id="ocr-body" className={`grid transition-all duration-300 ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
         <div className="overflow-hidden">
-          <div className="px-6 pb-6 pt-1 border-t border-gray-100">
-            <pre
-              className="mt-3 text-sm text-gray-700 whitespace-pre-wrap font-mono
-                         bg-gray-50 rounded-lg p-3 max-h-[300px] overflow-auto
-                         leading-relaxed"
-            >
+          <div className="border-t border-slate-100 px-5 pb-5 pt-3">
+            <pre className="max-h-[320px] overflow-auto rounded-2xl bg-slate-50 p-4 font-mono text-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
               {result.raw_text || 'No text extracted'}
             </pre>
           </div>
@@ -1145,24 +981,23 @@ function OcrCollapsible({ ocrResults }) {
   )
 }
 
-// ── Green KPI strip ───────────────────────────────────────────────────────────
-
 const SUSTAIN_TAG_TYPES = new Set([
-  'solar', 'carbon_offset', 'renewable_energy', 'recycled_materials', 'energy_efficiency',
+  'solar',
+  'carbon_offset',
+  'renewable_energy',
+  'recycled_materials',
+  'energy_efficiency',
 ])
 
 function GreenKpiStrip({ data, loading }) {
   if (loading) {
-    return (
-      <div className="h-14 rounded-xl shimmer-bg" aria-hidden="true" />
-    )
+    return <div className="h-16 rounded-3xl shimmer-bg" aria-hidden="true" />
   }
 
   if (!data) return null
 
-  const flags    = data.compliance_flags   ?? {}
-  const tags     = data.sustainability_tags ?? []
-
+  const flags = data.compliance_flags ?? {}
+  const tags = data.sustainability_tags ?? []
   const chips = []
 
   if (flags.gst_valid != null) {
@@ -1185,7 +1020,7 @@ function GreenKpiStrip({ data, loading }) {
       chips.push(
         <span
           key={`tag-${i}`}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 text-xs font-semibold border border-teal-100"
+          className="inline-flex items-center gap-1 rounded-full border border-teal-100 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700"
         >
           {tag.replace(/_/g, ' ')}
         </span>
@@ -1195,33 +1030,23 @@ function GreenKpiStrip({ data, loading }) {
 
   if (!chips.length) return null
 
-  const tagCount   = tags.length
-  const gstLabel   = flags.gst_valid == null ? '' : flags.gst_valid ? 'GST OK' : 'GST Issue'
+  const tagCount = tags.length
+  const gstLabel = flags.gst_valid == null ? '' : flags.gst_valid ? 'GST OK' : 'GST Issue'
   const summaryParts = []
   if (tagCount > 0) summaryParts.push(`${tagCount} green tag${tagCount !== 1 ? 's' : ''}`)
-  if (gstLabel)     summaryParts.push(gstLabel)
+  if (gstLabel) summaryParts.push(gstLabel)
   const summary = summaryParts.join(' · ')
 
   return (
-    <div
-      className="bg-white rounded-xl shadow-sm px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 animate-slide-up hover:shadow-md transition-shadow duration-200"
-      role="region"
-      aria-label="Green KPI snapshot"
-    >
+    <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center">
       <div className="flex-shrink-0">
-        <p className="text-xs font-bold text-gray-700 leading-none">Green KPI</p>
-        <p className="text-[10px] text-gray-400 mt-0.5">Compliance &amp; sustainability</p>
+        <p className="text-sm font-semibold text-slate-900">Green KPI</p>
+        <p className="text-xs text-slate-500">Compliance and sustainability</p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 flex-1">
-        {chips}
-      </div>
+      <div className="flex flex-1 flex-wrap gap-1.5">{chips}</div>
 
-      {summary && (
-        <p className="text-[11px] text-gray-400 font-medium flex-shrink-0 whitespace-nowrap">
-          {summary}
-        </p>
-      )}
+      {summary && <p className="text-xs font-medium text-slate-500">{summary}</p>}
     </div>
   )
 }
@@ -1251,7 +1076,6 @@ export default function InvoiceDetail() {
   const [assigningFolder, setAssigningFolder] = useState(false)
 
   const [mounted, setMounted] = useState(false)
-  const [confidenceWidths, setConfidenceWidths] = useState({})
 
   const channelRef = useRef(null)
   const previewRef = useRef(null)
@@ -1266,7 +1090,6 @@ export default function InvoiceDetail() {
       const res = await axios.get(`/api/green-kpi/invoices/${id}`)
       setGreenKpiData(res.data?.data ?? res.data ?? null)
     } catch {
-      // Silently skip — green KPI is non-critical
     } finally {
       setGreenKpiLoading(false)
     }
@@ -1275,7 +1098,8 @@ export default function InvoiceDetail() {
   useEffect(() => {
     fetchData()
     fetchGreenKpi()
-    axios.get('/api/folders').then(res => setFolders(res.data.folders)).catch(() => {})
+    axios.get('/api/folders').then((res) => setFolders(res.data.folders)).catch(() => {})
+
     return () => {
       const ref = channelRef.current
       if (!ref) return
@@ -1287,20 +1111,6 @@ export default function InvoiceDetail() {
       channelRef.current = null
     }
   }, [id])
-
-  useEffect(() => {
-    if (extractedFields.length === 0) return
-
-    const timer = setTimeout(() => {
-      const widths = {}
-      extractedFields.forEach((f) => {
-        widths[f.id] = `${Math.round((f.confidence_score ?? 0) * 100)}%`
-      })
-      setConfidenceWidths(widths)
-    }, 100)
-
-    return () => clearTimeout(timer)
-  }, [extractedFields])
 
   const fetchData = async () => {
     setLoading(true)
@@ -1331,7 +1141,7 @@ export default function InvoiceDetail() {
         { event: 'UPDATE', schema: 'public', table: 'invoices', filter: `id=eq.${id}` },
         (payload) => {
           const updated = payload.new
-          setInvoice(prev => prev ? { ...prev, ...updated } : updated)
+          setInvoice((prev) => (prev ? { ...prev, ...updated } : updated))
 
           if (!PROCESSING_STATUSES.includes(updated.status)) {
             setProcessing(false)
@@ -1343,17 +1153,16 @@ export default function InvoiceDetail() {
       )
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[Realtime] subscription failed, falling back to polling')
           supabase.removeChannel(channel)
           channelRef.current = null
-          _startPollingFallback()
+          startPollingFallback()
         }
       })
 
     channelRef.current = channel
   }
 
-  const _startPollingFallback = () => {
+  const startPollingFallback = () => {
     const intervalId = setInterval(async () => {
       try {
         const res = await axios.get(`/api/processing/status/${id}`)
@@ -1393,7 +1202,7 @@ export default function InvoiceDetail() {
       const canvas = await html2canvas(previewRef.current, {
         scale: 1.2,
         useCORS: true,
-        backgroundColor: '#f8f8f5',
+        backgroundColor: '#fafaf7',
         logging: false,
       })
 
@@ -1425,9 +1234,7 @@ export default function InvoiceDetail() {
         heightLeft -= pdfHeight
       }
 
-      const filename =
-        invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
-
+      const filename = invoice?.original_filename?.replace(/\.[^/.]+$/, '') || 'invoice-preview'
       pdf.save(`${filename}-preview.pdf`)
     } catch (err) {
       console.error('Failed to export PDF:', err)
@@ -1439,8 +1246,6 @@ export default function InvoiceDetail() {
 
   const startEditField = (field) => {
     setEditingFieldId(field.id)
-    // Pre-populate the editor with the *cleaned* value when editing dates
-    // or billing periods, so users don't have to manually delete garbage.
     const raw = field.validated_value ?? field.normalized_value ?? field.raw_value ?? ''
     let seed = raw
     if (field.field_name === 'invoice_date' || field.field_name === 'due_date') {
@@ -1518,52 +1323,61 @@ export default function InvoiceDetail() {
   const hasFields = extractedFields.length > 0
   const hasLineItems = lineItems.length > 0
   const currentStepIdx = STEP_ORDER.indexOf(invoice?.status ?? '')
-  const ocrText = ocrResults[0]?.raw_text || ''
 
   const avgConfidence = (() => {
     const scores = extractedFields
-      .map(f => f.confidence_score)
-      .filter(s => s != null && !Number.isNaN(Number(s)))
+      .map((f) => f.confidence_score)
+      .filter((s) => s != null && !Number.isNaN(Number(s)))
     if (!scores.length) return null
-    return Math.round(scores.reduce((a, b) => a + Number(b), 0) / scores.length * 100)
+    return Math.round((scores.reduce((a, b) => a + Number(b), 0) / scores.length) * 100)
   })()
 
   const fileMeta = [
     invoice?.file_type?.toUpperCase() || 'FILE',
-    invoice?.file_size_bytes
-      ? `${(invoice.file_size_bytes / 1024).toFixed(0)} KB`
-      : null,
+    invoice?.file_size_bytes ? `${(invoice.file_size_bytes / 1024).toFixed(0)} KB` : null,
     invoice?.created_at
-      ? `Uploaded ${new Date(invoice.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+      ? `Uploaded ${new Date(invoice.created_at).toLocaleDateString('en-AU', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })}`
       : null,
     invoice?.processed_at
-      ? `Processed ${new Date(invoice.processed_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`
+      ? `Processed ${new Date(invoice.processed_at).toLocaleDateString('en-AU', {
+          day: 'numeric',
+          month: 'short',
+        })}`
       : null,
-  ].filter(Boolean).join(' · ')
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   if (loading) {
     return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="h-6 w-32 shimmer-bg rounded" />
-        <div className="h-24 rounded-2xl shimmer-bg" />
-        <div className="h-64 rounded-2xl shimmer-bg" />
+      <div className="space-y-6">
+        <div className="h-8 w-40 rounded shimmer-bg" />
+        <div className="h-28 rounded-3xl shimmer-bg" />
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr),420px]">
+          <div className="h-[680px] rounded-3xl shimmer-bg" />
+          <div className="h-[680px] rounded-3xl shimmer-bg" />
+        </div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="space-y-4 animate-fade-in">
+      <div className="space-y-4">
         <button
           onClick={() => navigate('/invoices')}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-900"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Invoices
+          <ArrowLeft className="h-4 w-4" />
+          Back to invoices
         </button>
 
-        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+        <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+          <AlertCircle className="h-5 w-5 flex-shrink-0" />
           <span>{error}</span>
         </div>
       </div>
@@ -1572,234 +1386,206 @@ export default function InvoiceDetail() {
 
   return (
     <div className={`space-y-6 transition-opacity duration-300 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
-      <div className="animate-slide-up">
+      <div className="space-y-4">
         <button
           onClick={() => navigate('/invoices')}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 mb-4 transition-colors group"
+          className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-900"
         >
-          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-200" />
-          Back to Invoices
+          <ArrowLeft className="h-4 w-4" />
+          Back to invoices
         </button>
 
-        {/* ── Summary bar ───────────────────────────────────────────────── */}
-        <div
-          className="bg-white shadow-sm rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 hover:shadow-md transition-shadow duration-200"
-          role="region"
-          aria-label="Invoice summary"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div
-              aria-hidden="true"
-              className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0"
-            >
-              <FileText className="w-5 h-5 text-blue-600" />
+        <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 shadow-sm sm:p-6">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Invoice workspace
+                </div>
+
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-blue-100">
+                    <FileText className="h-6 w-6 text-blue-600" />
+                  </div>
+
+                  <div className="min-w-0">
+                    <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                      {invoice?.original_filename}
+                    </h1>
+                    <p className="mt-2 text-sm text-slate-500">{fileMeta}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill status={invoice?.status} />
+
+                {avgConfidence !== null && (
+                  <span
+                    className={[
+                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold',
+                      avgConfidence >= 80
+                        ? 'border-green-200 bg-green-50 text-green-700'
+                        : avgConfidence >= 55
+                        ? 'border-blue-200 bg-blue-50 text-blue-700'
+                        : 'border-orange-200 bg-orange-50 text-orange-700',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'h-1.5 w-1.5 rounded-full',
+                        avgConfidence >= 80
+                          ? 'bg-green-500'
+                          : avgConfidence >= 55
+                          ? 'bg-blue-500'
+                          : 'bg-orange-500',
+                      ].join(' ')}
+                    />
+                    Avg confidence {avgConfidence}%
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1
-                className="text-base font-bold text-gray-900 truncate"
-                title={invoice?.original_filename}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={exportPreviewAsPdf}
+                disabled={exportingPdf || (!hasFields && !hasLineItems)}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
               >
-                {invoice?.original_filename}
-              </h1>
-              <p className="text-xs text-gray-400 mt-0.5 truncate" title={fileMeta}>
-                {fileMeta}
-              </p>
+                <Download className="h-4 w-4" />
+                {exportingPdf ? 'Exporting…' : 'Export PDF'}
+              </button>
+
+              {canProcess || isActivelyProcessing || processing ? (
+                <button
+                  onClick={processInvoice}
+                  disabled={processing || isActivelyProcessing}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`} />
+                  {processing || isActivelyProcessing ? 'Processing…' : 'Process invoice'}
+                </button>
+              ) : hasOcr ? (
+                <button
+                  onClick={processInvoice}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Reprocess
+                </button>
+              ) : null}
             </div>
           </div>
-
-          <div className="flex items-center justify-start sm:justify-center flex-shrink-0">
-            <StatusPill status={invoice?.status} />
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end flex-shrink-0">
-            {avgConfidence !== null && (
-              <span
-                aria-label={`Average extraction confidence: ${avgConfidence}%`}
-                className={[
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border select-none',
-                  avgConfidence >= 80
-                    ? 'bg-green-50  text-green-700  border-green-200'
-                    : avgConfidence >= 55
-                    ? 'bg-blue-50   text-blue-700   border-blue-200'
-                    : 'bg-orange-50 text-orange-700 border-orange-200',
-                ].join(' ')}
-              >
-                <span
-                  aria-hidden="true"
-                  className={[
-                    'w-1.5 h-1.5 rounded-full',
-                    avgConfidence >= 80 ? 'bg-green-500'
-                    : avgConfidence >= 55 ? 'bg-blue-500'
-                    : 'bg-orange-500',
-                  ].join(' ')}
-                />
-                Avg confidence {avgConfidence}%
-              </span>
-            )}
-
-            <button
-              onClick={exportPreviewAsPdf}
-              disabled={exportingPdf || (!hasFields && !hasLineItems)}
-              aria-label={exportingPdf ? 'Exporting PDF…' : 'Export invoice as PDF'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
-                         border border-gray-200 text-gray-700 rounded-xl bg-white
-                         hover:bg-gray-50 hover:scale-[1.02] active:scale-[0.98]
-                         disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100
-                         transition-all duration-150 focus-visible:ring-2 focus-visible:ring-blue-400"
-            >
-              <Download className="w-3.5 h-3.5" aria-hidden="true" />
-              {exportingPdf ? 'Exporting…' : 'Export PDF'}
-            </button>
-
-            {(canProcess || isActivelyProcessing || processing) ? (
-              <button
-                onClick={processInvoice}
-                disabled={processing || isActivelyProcessing}
-                aria-label={processing || isActivelyProcessing ? 'Processing invoice…' : 'Run AI processing pipeline'}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
-                           bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl
-                           hover:from-blue-700 hover:to-indigo-700
-                           disabled:opacity-50 disabled:cursor-not-allowed
-                           transition-all duration-150 shadow-sm hover:shadow-md
-                           hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]
-                           focus-visible:ring-2 focus-visible:ring-blue-400"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${processing || isActivelyProcessing ? 'animate-spin' : ''}`}
-                  aria-hidden="true"
-                />
-                {processing || isActivelyProcessing ? 'Processing…' : 'Process Invoice'}
-              </button>
-            ) : hasOcr ? (
-              <button
-                onClick={processInvoice}
-                aria-label="Reprocess invoice through the AI pipeline"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
-                           border border-gray-200 text-gray-600 rounded-xl bg-white
-                           hover:bg-gray-50 hover:scale-[1.02] active:scale-[0.98]
-                           transition-all duration-150
-                           focus-visible:ring-2 focus-visible:ring-blue-400"
-              >
-                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-                Reprocess
-              </button>
-            ) : null}
-          </div>
-        </div>
+        </section>
 
         {processError && (
-          <div
-            role="alert"
-            className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm animate-slide-up"
-          >
-            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
             {processError}
           </div>
         )}
 
         {(processing || isActivelyProcessing) && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 animate-slide-up">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Pipeline progress</p>
+          <section className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+              Pipeline progress
+            </p>
 
-            <div className="flex items-center gap-0">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {STEPS.map((step, i) => {
                 const done = currentStepIdx >= i
                 const active = currentStepIdx === i - 1
-                  const isLast = i === STEPS.length - 1
 
-                  return (
-                    <div key={step.key} className="flex items-center flex-1 min-w-0">
-                      <div className="flex flex-col items-center gap-1">
-                        <div
-                          className={`
-                            w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
-                            transition-all duration-500
-                            ${
-                              done
-                                ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
-                                : active
-                                ? 'bg-blue-100 text-blue-600 ring-2 ring-blue-400 animate-pulse-soft'
-                                : 'bg-gray-100 text-gray-400'
-                            }
-                          `}
-                        >
-                          {done ? <Check className="w-3.5 h-3.5" /> : i + 1}
-                        </div>
-
-                        <span className={`hidden sm:block text-[10px] font-medium ${done ? 'text-blue-600' : 'text-gray-400'}`}>
-                          {step.label}
-                        </span>
-                      </div>
-
-                      {!isLast && (
-                        <div className="flex-1 mx-2 mb-4 h-0.5 rounded-full overflow-hidden bg-gray-200">
-                          <div
-                            className="h-full bg-blue-500 rounded-full transition-all duration-700"
-                            style={{ width: done ? '100%' : '0%' }}
-                          />
-                        </div>
-                      )}
+                return (
+                  <div
+                    key={step.key}
+                    className={`rounded-2xl border px-4 py-4 text-center ${
+                      done
+                        ? 'border-blue-200 bg-blue-50'
+                        : active
+                        ? 'border-blue-200 bg-white'
+                        : 'border-slate-200 bg-slate-50'
+                    }`}
+                  >
+                    <div
+                      className={`mx-auto flex h-9 w-9 items-center justify-center rounded-2xl text-sm font-bold ${
+                        done
+                          ? 'bg-blue-600 text-white'
+                          : active
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {done ? <Check className="h-4 w-4" /> : i + 1}
                     </div>
-                  )
-                })}
-              </div>
-          </div>
+                    <p className={`mt-3 text-sm font-semibold ${done || active ? 'text-slate-900' : 'text-slate-500'}`}>
+                      {step.label}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
         )}
       </div>
 
       {suggestedFolder && !invoice?.folder_id && (
-        <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm animate-wiggle shadow-sm">
-          <Folder className="w-5 h-5 text-amber-500 flex-shrink-0" />
-          <span className="flex-1 text-amber-800">
-            This looks like a <strong>{suggestedFolder.name}</strong> invoice. Move it to the {suggestedFolder.name} folder?
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm sm:flex-row sm:items-center">
+          <Folder className="h-5 w-5 flex-shrink-0 text-amber-500" />
+          <span className="flex-1">
+            This looks like a <strong>{suggestedFolder.name}</strong> invoice. Move it to that folder?
           </span>
-          <button
-            onClick={() => assignFolder(suggestedFolder.id)}
-            disabled={assigningFolder}
-            className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold hover:bg-amber-600 disabled:opacity-50 transition-colors shadow-sm"
-          >
-            Move
-          </button>
-          <button
-            onClick={dismissSuggestion}
-            className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg text-xs hover:bg-amber-100 transition-colors"
-          >
-            Dismiss
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => assignFolder(suggestedFolder.id)}
+              disabled={assigningFolder}
+              className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+            >
+              Move
+            </button>
+            <button
+              onClick={dismissSuggestion}
+              className="rounded-xl border border-amber-300 px-3 py-2 text-xs text-amber-700 transition hover:bg-amber-100"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
       {folders.length > 0 && (
-        <div className="flex items-center gap-3 text-sm animate-fade-in">
-          <Folder className="w-4 h-4 text-gray-400 flex-shrink-0" />
-          <span className="text-gray-500 font-medium">Folder:</span>
+        <div className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <Folder className="h-4 w-4 text-blue-500" />
+            <span className="font-medium">Folder</span>
+          </div>
           <select
             value={invoice?.folder_id || ''}
             onChange={(e) => assignFolder(e.target.value || null)}
             disabled={assigningFolder}
-            className="px-3 py-1.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-300 outline-none bg-white disabled:opacity-50 transition-shadow"
+            className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-300 disabled:opacity-50"
           >
             <option value="">— Unassigned —</option>
             {folders.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
             ))}
           </select>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-        <div className="md:col-span-2 flex flex-col gap-2">
-          <p className="text-xs text-gray-400 flex items-center gap-1.5">
-            <Edit2 className="w-3 h-3 text-blue-400" aria-hidden="true" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr),420px]">
+        <div className="min-w-0 space-y-3">
+          <p className="flex items-center gap-1.5 text-xs text-slate-500">
+            <Edit2 className="h-3.5 w-3.5 text-blue-400" />
             Click any highlighted value to edit
           </p>
 
-          <div
-            className="bg-blue-50 rounded-xl shadow-sm p-4 overflow-auto"
-            style={{ maxHeight: '72vh' }}
-            aria-label="Invoice preview"
-          >
-            {(hasFields || hasLineItems) ? (
+          <div className="overflow-auto rounded-3xl border border-slate-200 bg-blue-50/50 p-3 shadow-sm sm:p-4 lg:p-5">
+            {hasFields || hasLineItems ? (
               <InvoicePreviewCard
                 extractedFields={extractedFields}
                 lineItems={lineItems}
@@ -1808,12 +1594,12 @@ export default function InvoiceDetail() {
                 onEditField={startEditField}
               />
             ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center mx-auto mb-3">
-                  <FileText className="w-7 h-7 text-blue-300 animate-float" aria-hidden="true" />
+              <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-20 text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-blue-50">
+                  <Eye className="h-8 w-8 text-blue-300" />
                 </div>
-                <p className="text-sm text-gray-500 font-medium">No preview yet</p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-base font-semibold text-slate-800">No preview yet</p>
+                <p className="mt-2 text-sm text-slate-500">
                   {canProcess ? 'Click "Process Invoice" to extract data' : 'Process the invoice to generate a preview'}
                 </p>
               </div>
@@ -1821,7 +1607,7 @@ export default function InvoiceDetail() {
           </div>
         </div>
 
-        <div className="md:col-span-1">
+        <div className="min-w-0">
           <ExtractedFieldsPanel
             fields={extractedFields}
             editingFieldId={editingFieldId}
@@ -1835,8 +1621,6 @@ export default function InvoiceDetail() {
             isActivelyProcessing={isActivelyProcessing}
             processing={processing}
             avgConfidence={avgConfidence}
-            greenKpiData={greenKpiData}
-            greenKpiLoading={greenKpiLoading}
           />
         </div>
       </div>
@@ -1846,22 +1630,21 @@ export default function InvoiceDetail() {
       )}
 
       {hasLineItems && (
-        <div
-          className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200"
-          style={{ animationDelay: '0.2s' }}
-        >
-          <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
-            <h2 className="text-base font-bold text-gray-900">Line Items</h2>
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4">
+            <h2 className="text-sm font-semibold text-slate-900">Line items</h2>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-gray-50/80 border-b border-gray-200">
+                <tr className="border-b border-slate-200 bg-slate-50/80">
                   {['#', 'Description', 'Qty', 'Unit Price', 'Total'].map((h, i) => (
                     <th
                       key={i}
-                      className={`px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider ${i >= 2 ? 'text-right' : 'text-left'}`}
+                      className={`px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
+                        i >= 2 ? 'text-right' : 'text-left'
+                      }`}
                     >
                       {h}
                     </th>
@@ -1869,20 +1652,16 @@ export default function InvoiceDetail() {
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-gray-100">
-                {lineItems.map((item, i) => (
-                  <tr
-                    key={item.id}
-                    style={{ animationDelay: `${0.2 + i * 0.05}s` }}
-                    className="animate-fade-in hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="px-6 py-3 text-sm text-gray-400">{item.line_number}</td>
-                    <td className="px-6 py-3 text-sm text-gray-900">{item.description || '-'}</td>
-                    <td className="px-6 py-3 text-sm text-gray-700 text-right">{item.quantity ?? '-'}</td>
-                    <td className="px-6 py-3 text-sm text-gray-700 text-right">
+              <tbody className="divide-y divide-slate-100">
+                {lineItems.map((item) => (
+                  <tr key={item.id} className="transition hover:bg-slate-50">
+                    <td className="px-5 py-3 text-sm text-slate-400">{item.line_number}</td>
+                    <td className="px-5 py-3 text-sm text-slate-900">{item.description || '-'}</td>
+                    <td className="px-5 py-3 text-right text-sm text-slate-700">{item.quantity ?? '-'}</td>
+                    <td className="px-5 py-3 text-right text-sm text-slate-700">
                       {formatRate(item.unit_price, item.quantity)}
                     </td>
-                    <td className="px-6 py-3 text-sm font-semibold text-gray-900 text-right">
+                    <td className="px-5 py-3 text-right text-sm font-semibold text-slate-900">
                       {money(item.total_price)}
                     </td>
                   </tr>

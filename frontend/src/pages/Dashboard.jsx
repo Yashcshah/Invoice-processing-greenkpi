@@ -29,13 +29,12 @@ import {
   ScanLine,
 } from 'lucide-react'
 
-// ── Pipeline step definitions ────────────────────────────────────────────────
 const PIPELINE_STEPS = [
-  { id: 'preprocess', label: 'Preprocess', Icon: ScanLine, color: 'bg-blue-400' },
-  { id: 'ocr', label: 'OCR', Icon: Eye, color: 'bg-blue-500' },
-  { id: 'llm', label: 'LLM', Icon: Sparkles, color: 'bg-indigo-500' },
-  { id: 'gnn', label: 'GNN', Icon: GitBranch, color: 'bg-violet-500' },
-  { id: 'review', label: 'Review', Icon: ClipboardCheck, color: 'bg-emerald-500' },
+  { id: 'preprocess', label: 'Preprocess', Icon: ScanLine, tone: 'bg-blue-500' },
+  { id: 'ocr', label: 'OCR', Icon: Eye, tone: 'bg-sky-500' },
+  { id: 'llm', label: 'LLM', Icon: Sparkles, tone: 'bg-indigo-500' },
+  { id: 'gnn', label: 'GNN', Icon: GitBranch, tone: 'bg-violet-500' },
+  { id: 'review', label: 'Review', Icon: ClipboardCheck, tone: 'bg-emerald-500' },
 ]
 
 export default function Dashboard() {
@@ -45,6 +44,7 @@ export default function Dashboard() {
     completed: 0,
     failed: 0,
   })
+
   const [recentInvoices, setRecentInvoices] = useState([])
   const [loading, setLoading] = useState(true)
   const [mlStats, setMlStats] = useState(null)
@@ -55,7 +55,7 @@ export default function Dashboard() {
   const [confidenceTrend, setConfidenceTrend] = useState([])
   const [trendLoading, setTrendLoading] = useState(true)
 
-  const animateCountUp = (to, key, duration = 650) => {
+  const animateCountUp = (to, key, duration = 700) => {
     const startTime = performance.now()
 
     const step = (now) => {
@@ -167,20 +167,21 @@ export default function Dashboard() {
     }
   }
 
-  const gstDoughnutData = greenStats?.total_invoices > 0
-    ? [
-        {
-          name: 'GST Compliant',
-          value: greenStats.gst_valid_count ?? 0,
-          color: '#22C55E',
-        },
-        {
-          name: 'Non-Compliant',
-          value: (greenStats.total_invoices ?? 0) - (greenStats.gst_valid_count ?? 0),
-          color: '#EF4444',
-        },
-      ].filter((s) => s.value > 0)
-    : []
+  const gstDoughnutData =
+    greenStats?.total_invoices > 0
+      ? [
+          {
+            name: 'GST Compliant',
+            value: greenStats.gst_valid_count ?? 0,
+            color: '#22C55E',
+          },
+          {
+            name: 'Non-Compliant',
+            value: (greenStats.total_invoices ?? 0) - (greenStats.gst_valid_count ?? 0),
+            color: '#EF4444',
+          },
+        ].filter((s) => s.value > 0)
+      : []
 
   const clusterBarData = (mlStats?.agents ?? []).map((a) => ({
     name: a.cluster_label ?? `C${a.cluster_id}`,
@@ -191,226 +192,231 @@ export default function Dashboard() {
 
   const getStatusDot = (status) => {
     if (['preprocessing', 'ocr_processing', 'extraction_processing'].includes(status)) {
-      return 'bg-amber-400 animate-pulse'
+      return 'bg-amber-400'
     }
     if (['validated', 'exported', 'extraction_complete'].includes(status)) {
       return 'bg-emerald-400'
     }
     if (status === 'failed') return 'bg-rose-400'
-    return 'bg-gray-300'
+    return 'bg-slate-300'
   }
 
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="h-56 rounded-2xl shimmer-bg" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="h-64 rounded-3xl shimmer-bg" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-24 rounded-xl shimmer-bg" />
+            <div key={i} className="h-28 rounded-3xl shimmer-bg" />
           ))}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="h-72 rounded-xl shimmer-bg" />
-          <div className="h-72 rounded-xl shimmer-bg" />
+        <div className="h-80 rounded-3xl shimmer-bg" />
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <div className="h-80 rounded-3xl shimmer-bg" />
+          <div className="h-80 rounded-3xl shimmer-bg" />
         </div>
-        <div className="h-64 rounded-xl shimmer-bg" />
+        <div className="h-72 rounded-3xl shimmer-bg" />
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <section
-        aria-label="Invoice Processing overview"
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-xl shadow-blue-300/40 animate-slide-up"
-      >
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -top-12 -right-12 w-56 h-56 rounded-full bg-white/10 blur-3xl"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute bottom-0 left-1/3 w-40 h-40 rounded-full bg-blue-400/30 blur-2xl"
-        />
+      <section className="relative overflow-hidden rounded-3xl border border-blue-200 bg-gradient-to-br from-blue-600 via-blue-600 to-indigo-600 p-6 text-white shadow-xl shadow-blue-200/60 sm:p-8">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-0 left-1/3 h-40 w-40 rounded-full bg-cyan-300/10 blur-2xl" />
 
-        <div className="relative px-6 pt-7 pb-5 flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <p className="text-blue-200 text-xs font-semibold uppercase tracking-widest mb-1">
-              AI-Powered
-            </p>
-            <h1 className="text-2xl sm:text-3xl font-bold leading-tight">
-              Invoice Processing
-            </h1>
-            <p className="mt-1 text-blue-100 text-sm max-w-md leading-relaxed">
-              Upload invoices and let four AI layers — OCR, LLM, GNN, and ML cluster agents —
-              extract fields, validate compliance, and learn from your corrections automatically.
-            </p>
+        <div className="relative flex flex-col gap-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-blue-100">
+                <Sparkles className="h-3.5 w-3.5" />
+                AI-powered processing
+              </div>
+
+              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+                Invoice processing dashboard
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-blue-100 sm:text-base">
+                Track upload volume, extraction confidence, ML agent learning, and green KPI
+                signals across your invoice pipeline.
+              </p>
+            </div>
+
+            <Link
+              to="/upload"
+              className="inline-flex items-center gap-2 self-start rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-blue-700 shadow-lg transition hover:-translate-y-0.5 hover:bg-blue-50 hover:shadow-xl"
+            >
+              <Upload className="h-4 w-4" />
+              Upload invoice
+            </Link>
           </div>
 
-          <Link
-            to="/upload"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-blue-700 rounded-xl font-semibold text-sm
-                       hover:bg-blue-50 transition-all duration-150 shadow-lg hover:shadow-xl
-                       hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] flex-shrink-0"
-          >
-            <Upload className="w-4 h-4" aria-hidden="true" />
-            Upload Invoice
-          </Link>
-        </div>
-
-        <div
-          role="list"
-          aria-label="Invoice statistics"
-          className="relative mx-6 mb-5 grid grid-cols-2 sm:grid-cols-4 gap-px rounded-xl overflow-hidden bg-white/10"
-        >
-          {[
-            { label: 'Total Invoices', value: displayStats.total, icon: FileText, accent: 'text-blue-200' },
-            { label: 'In Progress', value: displayStats.processing, icon: Clock, accent: 'text-amber-200' },
-            { label: 'Completed', value: displayStats.completed, icon: CheckCircle, accent: 'text-emerald-200' },
-            { label: 'Failed', value: displayStats.failed, icon: AlertTriangle, accent: 'text-rose-200' },
-          ].map(({ label, value, icon: Icon, accent }) => (
-            <div
-              key={label}
-              role="listitem"
-              className="flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-3"
-            >
-              <Icon className={`w-5 h-5 flex-shrink-0 ${accent}`} aria-hidden="true" />
-              <div>
-                <p className="text-xl font-bold leading-none">{value}</p>
-                <p className="text-xs text-blue-100 mt-0.5">{label}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div
-          aria-label="Processing pipeline: Preprocess, OCR, LLM, GNN, Review"
-          className="relative mx-6 mb-6"
-        >
-          <p className="text-[11px] text-blue-200 uppercase tracking-widest font-semibold mb-3">
-            Processing Pipeline
-          </p>
-
-          <div className="flex items-center gap-0" role="list">
-            {PIPELINE_STEPS.map((step, i) => (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              {
+                label: 'Total invoices',
+                value: displayStats.total,
+                icon: FileText,
+                accent: 'text-blue-100',
+              },
+              {
+                label: 'In progress',
+                value: displayStats.processing,
+                icon: Clock,
+                accent: 'text-amber-200',
+              },
+              {
+                label: 'Completed',
+                value: displayStats.completed,
+                icon: CheckCircle,
+                accent: 'text-emerald-200',
+              },
+              {
+                label: 'Failed',
+                value: displayStats.failed,
+                icon: AlertTriangle,
+                accent: 'text-rose-200',
+              },
+            ].map(({ label, value, icon: Icon, accent }) => (
               <div
-                key={step.id}
-                role="listitem"
-                className="flex items-center flex-1 min-w-0"
+                key={label}
+                className="rounded-2xl border border-white/10 bg-white/10 px-4 py-4 backdrop-blur-sm"
               >
-                <div className="flex flex-col items-center flex-shrink-0">
-                  <div
-                    className={`w-9 h-9 rounded-full ${step.color} flex items-center justify-center shadow-lg ring-2 ring-white/30`}
-                    aria-label={step.label}
-                  >
-                    <step.Icon className="w-4 h-4 text-white" aria-hidden="true" />
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10">
+                    <Icon className={`h-5 w-5 ${accent}`} />
                   </div>
-                  <span className="mt-1.5 text-[10px] text-blue-100 font-medium whitespace-nowrap">
-                    {step.label}
-                  </span>
+                  <div>
+                    <p className="text-2xl font-bold leading-none">{value}</p>
+                    <p className="mt-1 text-xs text-blue-100">{label}</p>
+                  </div>
                 </div>
-
-                {i < PIPELINE_STEPS.length - 1 && (
-                  <div aria-hidden="true" className="flex-1 flex items-center mx-1 mb-4">
-                    <div className="flex-1 h-px bg-white/30" />
-                    <svg
-                      viewBox="0 0 6 8"
-                      className="w-1.5 h-2 text-white/40 flex-shrink-0"
-                      fill="currentColor"
-                    >
-                      <path d="M0 0 L6 4 L0 8 Z" />
-                    </svg>
-                  </div>
-                )}
               </div>
             ))}
+          </div>
+
+          <div>
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-100">
+              Processing pipeline
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {PIPELINE_STEPS.map((step) => (
+                <div
+                  key={step.id}
+                  className="rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-center backdrop-blur-sm"
+                >
+                  <div
+                    className={`mx-auto flex h-11 w-11 items-center justify-center rounded-2xl ${step.tone} shadow-lg`}
+                  >
+                    <step.Icon className="h-5 w-5 text-white" />
+                  </div>
+                  <p className="mt-3 text-sm font-semibold text-white">{step.label}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
-      <div
-        role="list"
-        aria-label="Invoice count summary"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-4"
-      >
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { title: 'Total Invoices', key: 'total', Icon: FileText, gradient: 'from-blue-500 to-blue-600', shadow: 'shadow-blue-200' },
-          { title: 'In Progress', key: 'processing', Icon: Clock, gradient: 'from-amber-400 to-orange-500', shadow: 'shadow-amber-200' },
-          { title: 'Completed', key: 'completed', Icon: CheckCircle, gradient: 'from-emerald-400 to-green-500', shadow: 'shadow-emerald-200' },
-          { title: 'Failed', key: 'failed', Icon: AlertTriangle, gradient: 'from-rose-400 to-red-500', shadow: 'shadow-rose-200' },
-        ].map(({ title, key, Icon, gradient, shadow }, i) => (
+          {
+            title: 'Total invoices',
+            key: 'total',
+            Icon: FileText,
+            bg: 'from-blue-500 to-blue-600',
+          },
+          {
+            title: 'In progress',
+            key: 'processing',
+            Icon: Clock,
+            bg: 'from-amber-400 to-orange-500',
+          },
+          {
+            title: 'Completed',
+            key: 'completed',
+            Icon: CheckCircle,
+            bg: 'from-emerald-400 to-green-500',
+          },
+          {
+            title: 'Failed',
+            key: 'failed',
+            Icon: AlertTriangle,
+            bg: 'from-rose-400 to-red-500',
+          },
+        ].map(({ title, key, Icon, bg }) => (
           <div
             key={title}
-            role="listitem"
-            style={{ animationDelay: `${i * 70}ms` }}
-            className="animate-slide-up card-hover bg-white rounded-xl p-5 border border-gray-100 flex items-center gap-4 shadow-sm"
+            className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
           >
-            <div className={`p-3 rounded-xl bg-gradient-to-br ${gradient} shadow-lg ${shadow} flex-shrink-0`}>
-              <Icon className="w-5 h-5 text-white" aria-hidden="true" />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide leading-tight">
-                {title}
-              </p>
-              <p className="text-3xl font-bold text-gray-900 leading-tight tabular-nums">
-                {displayStats[key]}
-              </p>
+            <div className="flex items-center gap-4">
+              <div
+                className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br ${bg} text-white shadow-lg`}
+              >
+                <Icon className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {title}
+                </p>
+                <p className="mt-1 text-3xl font-bold leading-none text-slate-900">
+                  {displayStats[key]}
+                </p>
+              </div>
             </div>
           </div>
         ))}
-      </div>
+      </section>
 
-      <section
-        aria-label="Extraction confidence trend"
-        className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
-        style={{ animationDelay: '0.12s' }}
-      >
-        <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
-              <Zap className="w-4 h-4 text-blue-500" aria-hidden="true" />
+      <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
+              <Zap className="h-5 w-5 text-blue-600" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Confidence Trend</h2>
-              <p className="text-[11px] text-gray-400 leading-tight">
-                Average extraction confidence per day — last 30 days
+              <h2 className="text-sm font-semibold text-slate-900">Confidence trend</h2>
+              <p className="text-xs text-slate-500">
+                Average extraction confidence over the last 30 days
               </p>
             </div>
           </div>
 
           {confidenceTrend.length > 0 && (
-            <div className="text-right flex-shrink-0">
-              <p className="text-lg font-bold text-blue-600 tabular-nums leading-none">
+            <div className="text-left sm:text-right">
+              <p className="text-2xl font-bold leading-none text-blue-600">
                 {confidenceTrend[confidenceTrend.length - 1]?.avg_confidence ?? '—'}%
               </p>
-              <p className="text-[11px] text-gray-400">latest</p>
+              <p className="text-xs text-slate-500">latest</p>
             </div>
           )}
-        </header>
+        </div>
 
-        <div className="px-4 py-4">
+        <div className="px-4 py-4 sm:px-5">
           <ConfidenceTrendChart
             data={confidenceTrend}
-            height={200}
+            height={240}
             loading={trendLoading}
           />
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <article
-          aria-label="ML Cluster Agents panel"
-          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
-          style={{ animationDelay: '0.15s' }}
-        >
-          <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
-                <Brain className="w-4 h-4 text-violet-600" aria-hidden="true" />
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-100">
+                <Brain className="h-5 w-5 text-violet-600" />
               </div>
-              <h2 className="text-sm font-semibold text-gray-900">ML Cluster Agents</h2>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">ML cluster agents</h2>
+                <p className="text-xs text-slate-500">Learning from invoice corrections</p>
+              </div>
               {mlStats?.is_trained && (
-                <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[11px] font-semibold">
+                <span className="rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-semibold text-violet-700">
                   Active
                 </span>
               )}
@@ -419,117 +425,115 @@ export default function Dashboard() {
             <button
               onClick={handleRetrain}
               disabled={retraining}
-              aria-label={retraining ? 'Retraining in progress' : 'Retrain ML cluster agents'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600
-                         border border-violet-200 rounded-lg hover:bg-violet-50 disabled:opacity-50
-                         transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]
-                         focus-visible:ring-2 focus-visible:ring-violet-400"
+              className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50 disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${retraining ? 'animate-spin' : ''}`} aria-hidden="true" />
-              {retraining ? 'Training…' : 'Retrain'}
+              <RefreshCw className={`h-4 w-4 ${retraining ? 'animate-spin' : ''}`} />
+              {retraining ? 'Training...' : 'Retrain'}
             </button>
-          </header>
+          </div>
 
           {mlLoading ? (
-            <div className="px-5 py-6 space-y-2">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="h-4 rounded shimmer-bg" style={{ width: `${70 - i * 15}%` }} />
+            <div className="space-y-3 px-5 py-6">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-14 rounded-2xl shimmer-bg" />
               ))}
             </div>
           ) : !mlStats?.is_trained || mlStats.total_clusters === 0 ? (
-            <div className="px-5 py-10 text-center animate-fade-in">
-              <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center mx-auto mb-3">
-                <Brain className="w-6 h-6 text-violet-300 animate-float" aria-hidden="true" />
+            <div className="px-5 py-14 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-3xl bg-violet-50">
+                <Brain className="h-7 w-7 text-violet-300" />
               </div>
-              <p className="text-sm font-medium text-gray-600 mb-1">No clusters yet</p>
-              <p className="text-xs text-gray-400 max-w-xs mx-auto">
-                Process at least 2 invoices then click <span className="font-semibold text-violet-600">Retrain</span> to build the first agents.
+              <p className="text-sm font-semibold text-slate-700">No clusters yet</p>
+              <p className="mt-2 text-sm text-slate-500">
+                Process at least 2 invoices, then retrain to build your first ML agents.
               </p>
             </div>
           ) : (
-            <div className="px-5 py-4 space-y-4">
-              <div
-                role="list"
-                aria-label="Cluster agent metrics"
-                className="grid grid-cols-3 gap-3"
-              >
+            <div className="space-y-5 px-5 py-5">
+              <div className="grid grid-cols-3 gap-3">
                 {[
-                  { label: 'Clusters', value: mlStats.total_clusters, Icon: Layers, color: 'text-violet-600', bg: 'bg-violet-50' },
-                  { label: 'Avg Accuracy', value: `${mlStats.avg_accuracy}%`, Icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                  { label: 'Corrections', value: mlStats.total_corrections, Icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-50' },
-                ].map(({ label, value, Icon, color, bg }) => (
-                  <div
-                    key={label}
-                    role="listitem"
-                    className={`rounded-xl p-3 ${bg} flex flex-col gap-1`}
-                  >
-                    <Icon className={`w-4 h-4 ${color}`} aria-hidden="true" />
-                    <p className="text-lg font-bold text-gray-900 leading-none tabular-nums">{value}</p>
-                    <p className="text-[11px] text-gray-500 leading-tight">{label}</p>
+                  {
+                    label: 'Clusters',
+                    value: mlStats.total_clusters,
+                    Icon: Layers,
+                    tone: 'bg-violet-50 text-violet-700',
+                  },
+                  {
+                    label: 'Avg accuracy',
+                    value: `${mlStats.avg_accuracy}%`,
+                    Icon: Zap,
+                    tone: 'bg-emerald-50 text-emerald-700',
+                  },
+                  {
+                    label: 'Corrections',
+                    value: mlStats.total_corrections,
+                    Icon: CheckCircle,
+                    tone: 'bg-blue-50 text-blue-700',
+                  },
+                ].map(({ label, value, Icon, tone }) => (
+                  <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                    <div className={`mb-2 inline-flex rounded-xl p-2 ${tone}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <p className="text-lg font-bold text-slate-900">{value}</p>
+                    <p className="text-[11px] text-slate-500">{label}</p>
                   </div>
                 ))}
               </div>
 
               <div>
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Accuracy by cluster
                 </p>
-                <ClusterAccuracyChart data={clusterBarData} height={150} loading={mlLoading} />
+                <ClusterAccuracyChart data={clusterBarData} height={180} loading={mlLoading} />
               </div>
 
-              <ul aria-label="Top cluster agents" className="space-y-1.5">
-                {mlStats.agents.slice(0, 3).map((agent, i) => (
-                  <li
+              <div className="space-y-2">
+                {mlStats.agents.slice(0, 3).map((agent) => (
+                  <div
                     key={agent.cluster_id}
-                    style={{ animationDelay: `${i * 50}ms` }}
-                    className="animate-slide-in-left flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                    className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-3"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="w-6 h-6 rounded-md bg-violet-100 flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-violet-600">
-                        #{agent.cluster_id}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-gray-800 truncate">
-                          {agent.cluster_label || `Cluster ${agent.cluster_id}`}
-                        </p>
-                        <p className="text-[10px] text-gray-400">
-                          {agent.invoice_count} inv · {agent.correction_count} corrections
-                        </p>
-                      </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">
+                        {agent.cluster_label || `Cluster ${agent.cluster_id}`}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {agent.invoice_count} invoices · {agent.correction_count} corrections
+                      </p>
                     </div>
 
-                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
-                      <div className="w-16 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-20 overflow-hidden rounded-full bg-slate-200">
                         <div
-                          className="h-full rounded-full bg-violet-500 transition-all duration-700"
+                          className="h-full rounded-full bg-violet-500"
                           style={{ width: `${agent.accuracy_score}%` }}
-                          aria-label={`${agent.accuracy_score}% accuracy`}
                         />
                       </div>
-                      <span className="text-xs font-semibold text-gray-600 tabular-nums w-8 text-right">
+                      <span className="w-10 text-right text-xs font-semibold text-slate-600">
                         {agent.accuracy_score}%
                       </span>
                     </div>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
         </article>
 
-        <article
-          aria-label="Green KPI Snapshot panel"
-          className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
-          style={{ animationDelay: '0.2s' }}
-        >
-          <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-                <Leaf className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+        <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100">
+                <Leaf className="h-5 w-5 text-emerald-600" />
               </div>
-              <h2 className="text-sm font-semibold text-gray-900">Green KPI Snapshot</h2>
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Green KPI snapshot</h2>
+                <p className="text-xs text-slate-500">Sustainability and compliance overview</p>
+              </div>
+
               {greenStats?.total_invoices > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-semibold">
+                <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
                   {greenStats.total_invoices} processed
                 </span>
               )}
@@ -537,70 +541,63 @@ export default function Dashboard() {
 
             <Link
               to="/invoices"
-              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 flex items-center gap-1 group"
-              aria-label="View all invoices"
+              className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 transition hover:text-emerald-800"
             >
               View all
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform duration-200" aria-hidden="true" />
+              <ArrowRight className="h-4 w-4" />
             </Link>
-          </header>
+          </div>
 
           {greenLoading ? (
-            <div className="px-5 py-6 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 px-5 py-6">
               {[...Array(4)].map((_, i) => (
-                <div key={i} className="h-14 rounded-lg shimmer-bg" />
+                <div key={i} className="h-16 rounded-2xl shimmer-bg" />
               ))}
             </div>
           ) : !greenStats || greenStats.total_invoices === 0 ? (
-            <div className="px-5 py-10 text-center animate-fade-in">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
-                <Leaf className="w-6 h-6 text-emerald-300 animate-float" aria-hidden="true" />
+            <div className="px-5 py-14 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-3xl bg-emerald-50">
+                <Leaf className="h-7 w-7 text-emerald-300" />
               </div>
-              <p className="text-sm font-medium text-gray-600 mb-1">No Green KPI data yet</p>
-              <p className="text-xs text-gray-400 max-w-xs mx-auto">
-                Process invoices to start tracking sustainability, GST compliance, and spend.
+              <p className="text-sm font-semibold text-slate-700">No Green KPI data yet</p>
+              <p className="mt-2 text-sm text-slate-500">
+                Process invoices to start tracking spend, GST compliance, and sustainability tags.
               </p>
             </div>
           ) : (
-            <div className="px-5 py-4 space-y-4">
-              <div
-                role="list"
-                aria-label="Green KPI metrics"
-                className="grid grid-cols-2 gap-3"
-              >
+            <div className="space-y-5 px-5 py-5">
+              <div className="grid grid-cols-2 gap-3">
                 {[
                   {
-                    label: 'Total Spend',
+                    label: 'Total spend',
                     value: `$${(greenStats.total_spend_aud || 0).toLocaleString()}`,
                     Icon: DollarSign,
-                    color: 'text-blue-600',
-                    bg: 'bg-blue-50',
+                    tone: 'bg-blue-50 text-blue-700',
                   },
                   {
-                    label: 'GST Compliance',
+                    label: 'GST compliance',
                     value: `${greenStats.gst_compliance_pct || 0}%`,
                     Icon: ShieldCheck,
-                    color: 'text-emerald-600',
-                    bg: 'bg-emerald-50',
+                    tone: 'bg-emerald-50 text-emerald-700',
                   },
-                ].map(({ label, value, Icon, color, bg }) => (
-                  <div key={label} role="listitem" className={`rounded-xl p-3 ${bg} flex items-center gap-2.5`}>
-                    <Icon className={`w-5 h-5 ${color} flex-shrink-0`} aria-hidden="true" />
-                    <div>
-                      <p className="text-lg font-bold text-gray-900 leading-none tabular-nums">{value}</p>
-                      <p className="text-[11px] text-gray-500 mt-0.5">{label}</p>
+                ].map(({ label, value, Icon, tone }) => (
+                  <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div className={`mb-2 inline-flex rounded-xl p-2 ${tone}`}>
+                      <Icon className="h-4 w-4" />
                     </div>
+                    <p className="text-lg font-bold text-slate-900">{value}</p>
+                    <p className="text-[11px] text-slate-500">{label}</p>
                   </div>
                 ))}
               </div>
 
               <div>
-                <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   GST compliance
                 </p>
                 <KpiDoughnutChart
                   data={gstDoughnutData}
-                  height={190}
+                  height={210}
                   loading={greenLoading}
                   title={`${greenStats.gst_compliance_pct ?? 0}%`}
                   subtitle="GST OK"
@@ -609,23 +606,21 @@ export default function Dashboard() {
 
               {greenStats.top_sustainability_tags?.length > 0 && (
                 <div>
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                     Top sustainability tags
                   </p>
-                  <ul aria-label="Sustainability tags" className="flex flex-col gap-1.5">
+                  <div className="flex flex-wrap gap-2">
                     {greenStats.top_sustainability_tags.slice(0, 5).map(([tag, count]) => (
-                      <li key={tag} className="flex items-center justify-between gap-2">
+                      <div key={tag} className="flex items-center gap-1.5">
                         <KpiChip type={tag} />
-                        <span className="text-[11px] text-gray-400 tabular-nums flex-shrink-0">
-                          ×{count}
-                        </span>
-                      </li>
+                        <span className="text-[11px] text-slate-500">×{count}</span>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-50">
+              <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
                 <KpiChip
                   type={(greenStats.gst_compliance_pct ?? 0) >= 90 ? 'gst_ok' : 'gst_issue'}
                 />
@@ -635,83 +630,80 @@ export default function Dashboard() {
             </div>
           )}
         </article>
-      </div>
+      </section>
 
-      <section
-        aria-label="Recent invoices"
-        className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
-        style={{ animationDelay: '0.25s' }}
-      >
-        <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-blue-500" aria-hidden="true" />
-            <h2 className="text-sm font-semibold text-gray-900">Recent Invoices</h2>
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
+              <FileText className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Recent invoices</h2>
+              <p className="text-xs text-slate-500">Latest uploaded and processed files</p>
+            </div>
           </div>
 
           <Link
             to="/invoices"
-            className="text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1 group"
+            className="inline-flex items-center gap-1 text-sm font-medium text-blue-700 transition hover:text-blue-800"
           >
             View all
-            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform duration-200" aria-hidden="true" />
+            <ArrowRight className="h-4 w-4" />
           </Link>
-        </header>
+        </div>
 
         {recentInvoices.length === 0 ? (
-          <div className="px-5 py-14 text-center animate-fade-in">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-3">
-              <FileText className="w-7 h-7 text-blue-300 animate-float" aria-hidden="true" />
+          <div className="px-6 py-16 text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-blue-50">
+              <FileText className="h-8 w-8 text-blue-300" />
             </div>
-            <p className="text-sm font-medium text-gray-600 mb-1">No invoices yet</p>
-            <p className="text-xs text-gray-400 mb-5">Upload your first invoice to get started</p>
+            <p className="text-base font-semibold text-slate-800">No invoices yet</p>
+            <p className="mt-2 text-sm text-slate-500">
+              Upload your first invoice to get started.
+            </p>
             <Link
               to="/upload"
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl
-                         font-semibold text-sm hover:bg-blue-700 transition-all duration-150
-                         shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
+              className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-lg"
             >
-              <Upload className="w-4 h-4" aria-hidden="true" />
-              Upload Invoice
+              <Upload className="h-4 w-4" />
+              Upload invoice
             </Link>
           </div>
         ) : (
-          <ul aria-label="Recent invoice list" className="divide-y divide-gray-50">
-            {recentInvoices.map((invoice, i) => (
+          <ul className="divide-y divide-slate-100">
+            {recentInvoices.map((invoice) => (
               <li key={invoice.id}>
                 <Link
                   to={`/invoices/${invoice.id}`}
-                  style={{ animationDelay: `${0.25 + i * 0.05}s` }}
-                  className="animate-slide-in-left flex items-center justify-between px-5 py-3.5
-                             hover:bg-gray-50 transition-colors duration-150 group"
-                  aria-label={`Invoice: ${invoice.original_filename}, status: ${invoice.status}`}
+                  className="group flex flex-col gap-4 px-5 py-4 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="relative p-2 bg-gray-100 rounded-xl group-hover:bg-blue-50 transition-colors duration-200 flex-shrink-0">
-                      <FileText className="w-4 h-4 text-gray-400 group-hover:text-blue-500 transition-colors duration-200" aria-hidden="true" />
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-slate-100 transition group-hover:bg-blue-100">
+                      <FileText className="h-5 w-5 text-slate-500 group-hover:text-blue-600" />
                       <span
-                        aria-hidden="true"
-                        className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border-2 border-white ${getStatusDot(invoice.status)}`}
+                        className={`absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white ${getStatusDot(invoice.status)}`}
                       />
                     </div>
+
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900 group-hover:text-blue-600 transition-colors duration-200 truncate">
+                      <p className="truncate text-sm font-semibold text-slate-900 group-hover:text-blue-700">
                         {invoice.original_filename}
                       </p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">
+                      <p className="mt-1 truncate text-xs text-slate-500">
                         {invoice.vendor_name && (
-                          <span className="text-indigo-500 font-medium">{invoice.vendor_name} · </span>
+                          <span className="font-medium text-indigo-600">
+                            {invoice.vendor_name} ·{' '}
+                          </span>
                         )}
                         {new Date(invoice.created_at).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5 flex-shrink-0 ml-3">
+                  <div className="flex items-center gap-3">
                     <StatusPill status={invoice.status} />
-                    <ArrowRight
-                      className="w-3.5 h-3.5 text-gray-300 group-hover:text-gray-500 group-hover:translate-x-0.5 transition-all duration-200"
-                      aria-hidden="true"
-                    />
+                    <ArrowRight className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
                   </div>
                 </Link>
               </li>

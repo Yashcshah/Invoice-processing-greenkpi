@@ -1,7 +1,16 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { FileText, Mail, Lock, AlertCircle } from 'lucide-react'
+import {
+  FileText,
+  Mail,
+  Lock,
+  AlertCircle,
+  ArrowRight,
+  Sparkles,
+  ShieldCheck,
+  ScanText,
+} from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -22,90 +31,193 @@ export default function Login() {
     if (error) {
       setError(error.message)
     }
+
     setLoading(false)
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full">
-        {/* Logo & Title */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-4">
-            <FileText className="w-8 h-8 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
+      <div className="mx-auto grid min-h-screen max-w-7xl lg:grid-cols-2">
+        {/* Left panel */}
+        <div className="hidden lg:flex flex-col justify-between border-r border-slate-200 bg-white/70 px-10 py-10 backdrop-blur">
+          <div>
+            <div className="inline-flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 shadow-lg shadow-blue-200">
+                <FileText className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <p className="text-lg font-bold text-slate-900">InvoiceAI</p>
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-400">
+                  Processing
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-16 max-w-lg">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                <Sparkles className="h-3.5 w-3.5" />
+                Smart invoice workflow
+              </div>
+
+              <h1 className="text-4xl font-bold tracking-tight text-slate-900 leading-tight">
+                Sign in and manage invoices with a modern AI workflow
+              </h1>
+
+              <p className="mt-4 text-base leading-7 text-slate-600">
+                Upload files, extract invoice data with OCR and AI, review fields,
+                and track compliance in one clean workspace.
+              </p>
+            </div>
+
+            <div className="mt-10 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
+                  <ScanText className="h-5 w-5 text-blue-600" />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">OCR Extraction</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Pull text from PDFs and images quickly.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-50">
+                  <Sparkles className="h-5 w-5 text-indigo-600" />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">AI Review</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Detect fields and structure invoice data.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50">
+                  <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">Validation</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Review, correct, and organize results securely.
+                </p>
+              </div>
+            </div>
           </div>
-          <h2 className="text-3xl font-bold text-gray-900">Welcome back</h2>
-          <p className="mt-2 text-gray-600">Sign in to your invoice processing account</p>
+
+          <p className="text-sm text-slate-400">
+            Clean invoice processing for modern teams.
+          </p>
         </div>
 
-        {/* Login Form */}
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <form onSubmit={handleLogin} className="space-y-6">
-            {error && (
-              <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-                <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                <span className="text-sm">{error}</span>
+        {/* Right panel */}
+        <div className="flex items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
+          <div className="w-full max-w-md">
+            <div className="mb-8 text-center lg:hidden">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-blue-600 to-indigo-600 shadow-lg shadow-blue-200">
+                <FileText className="h-8 w-8 text-white" />
               </div>
-            )}
+              <h2 className="text-3xl font-bold text-slate-900">Welcome back</h2>
+              <p className="mt-2 text-slate-600">
+                Sign in to your invoice processing account
+              </p>
+            </div>
 
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email address
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60 sm:p-8">
+              <div className="hidden lg:block mb-8">
+                <h2 className="text-3xl font-bold tracking-tight text-slate-900">
+                  Welcome back
+                </h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Sign in to continue managing uploads, reviews, and extracted invoice data.
+                </p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-5">
+                {error && (
+                  <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700">
+                    <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+                    <span className="text-sm">{error}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-medium text-slate-700"
+                  >
+                    Email address
+                  </label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                      <Mail className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                      id="email"
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="block w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-slate-900 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-300"
+                    />
+                  </div>
                 </div>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="block w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  placeholder="you@example.com"
-                />
+
+                <div>
+                  <label
+                    htmlFor="password"
+                    className="mb-2 block text-sm font-medium text-slate-700"
+                  >
+                    Password
+                  </label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+                      <Lock className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                      id="password"
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="block w-full rounded-2xl border border-slate-200 bg-slate-50 py-3.5 pl-12 pr-4 text-slate-900 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-300"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:from-blue-700 hover:to-indigo-700 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+                >
+                  {loading ? (
+                    <>
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      Signing in...
+                    </>
+                  ) : (
+                    <>
+                      Sign in
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <div className="mt-6 text-center">
+                <p className="text-sm text-slate-600">
+                  Don&apos;t have an account?{' '}
+                  <Link
+                    to="/signup"
+                    className="font-semibold text-blue-600 transition hover:text-blue-700"
+                  >
+                    Sign up
+                  </Link>
+                </p>
               </div>
             </div>
 
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  placeholder="••••••••"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              ) : (
-                'Sign in'
-              )}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
-              <Link to="/signup" className="font-medium text-blue-600 hover:text-blue-500">
-                Sign up
-              </Link>
+            <p className="mt-6 text-center text-xs text-slate-400">
+              Secure access for invoice uploads, extraction, and review.
             </p>
           </div>
         </div>

@@ -18,6 +18,8 @@ import {
   LayoutGrid,
   AlertCircle,
   RotateCcw,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 
 function VendorConfidenceSparkline({ invoiceId, status }) {
@@ -41,9 +43,11 @@ function VendorConfidenceSparkline({ invoiceId, status }) {
   const span = hi - lo || 8
   const toY = (v) => H - p - ((v - lo) / span) * (H - 2 * p)
   const toX = (i) => p + (i / (pts.length - 1)) * (W - 2 * p)
+
   const path = pts
     .map((v, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`)
     .join(' ')
+
   const last = pts.at(-1)
   const col = last >= 80 ? '#22C55E' : last >= 62 ? '#3B82F6' : '#F97316'
 
@@ -93,6 +97,7 @@ export default function Invoices() {
   const [processingIds, setProcessingIds] = useState(new Set())
   const [notification, setNotification] = useState(null)
   const [resettingStuck, setResettingStuck] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     axios.get('/api/folders').then((res) => setFolders(res.data.folders)).catch(() => {})
@@ -174,7 +179,7 @@ export default function Invoices() {
     setProcessingIds((prev) => new Set(prev).add(id))
     try {
       await axios.post('/api/processing/process', { invoice_id: id })
-      showNotification('Processing started! Refresh to see progress.')
+      showNotification('Processing started. Refresh to see progress.')
       fetchInvoices()
     } catch (err) {
       showNotification(err.response?.data?.detail || 'Failed to start processing', 'error')
@@ -194,10 +199,10 @@ export default function Invoices() {
       const { reset } = res.data
 
       if (reset === 0) {
-        showNotification('No stuck invoices found — everything looks clean.', 'success')
+        showNotification('No stuck invoices found.', 'success')
       } else {
         showNotification(
-          `Reset ${reset} stuck invoice${reset !== 1 ? 's' : ''} → ready to reprocess.`,
+          `Reset ${reset} stuck invoice${reset !== 1 ? 's' : ''}.`,
           'success'
         )
       }
@@ -239,7 +244,8 @@ export default function Invoices() {
     return invoices.filter((inv) => {
       if (
         searchQuery &&
-        !inv.original_filename.toLowerCase().includes(searchQuery.toLowerCase())
+        !inv.original_filename.toLowerCase().includes(searchQuery.toLowerCase()) &&
+        !(inv.vendor_name || '').toLowerCase().includes(searchQuery.toLowerCase())
       ) {
         return false
       }
@@ -262,7 +268,7 @@ export default function Invoices() {
 
   const gstIssueCount = gstIssueIds?.size ?? null
 
-  const QUICK_FILTERS = [
+  const quickFilters = [
     { id: 'all', label: 'All', count: invoices.length },
     { id: 'needs_review', label: 'Needs Review', count: needsReviewCount },
     { id: 'gst_issues', label: 'GST Issues', count: gstIssueCount },
@@ -284,378 +290,386 @@ export default function Invoices() {
       .join(' · ')
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-6">
       {notification && (
         <div
-          className={`
-            fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3
-            rounded-xl text-sm font-medium shadow-lg animate-slide-in-right
-            ${
-              notification.type === 'error'
-                ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-            }
-          `}
+          className={`fixed right-4 top-4 z-50 flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium shadow-lg ${
+            notification.type === 'error'
+              ? 'border-rose-200 bg-rose-50 text-rose-700'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          }`}
         >
-          {notification.type === 'error' ? '❌' : '✅'} {notification.msg}
+          <span>{notification.type === 'error' ? '❌' : '✅'}</span>
+          <span>{notification.msg}</span>
         </div>
       )}
 
-      <div className="flex gap-5 items-start">
-        <aside className="w-52 flex-shrink-0 bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-in-left">
-          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Folders</h2>
+      <section className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-5 sm:p-6 shadow-sm">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+          <div className="max-w-2xl">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              All invoices
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600 sm:text-base">
+              Search, filter, organize, and review uploaded invoices in one place.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Total</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">{invoices.length}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Needs Review</p>
+              <p className="mt-1 text-2xl font-bold text-amber-600">{needsReviewCount}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">GST Issues</p>
+              <p className="mt-1 text-2xl font-bold text-rose-600">{gstIssueCount ?? '—'}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Folders</p>
+              <p className="mt-1 text-2xl font-bold text-blue-600">{folders.length}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[280px,minmax(0,1fr)]">
+        <aside className="xl:sticky xl:top-24 xl:self-start">
+          <div className="mb-3 flex items-center justify-between xl:hidden">
             <button
-              onClick={() => setShowNewFolder(true)}
-              title="New folder"
-              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200"
+              onClick={() => setSidebarOpen((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm"
             >
-              <FolderPlus className="w-4 h-4" />
+              {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+              {sidebarOpen ? 'Hide folders' : 'Show folders'}
             </button>
           </div>
 
-          {showNewFolder && (
-            <div className="px-3 py-2.5 border-b border-gray-100 flex gap-1.5 bg-blue-50/40 animate-slide-up">
-              <input
-                autoFocus
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') createFolder()
-                  if (e.key === 'Escape') {
-                    setShowNewFolder(false)
-                    setNewFolderName('')
-                  }
-                }}
-                placeholder="Folder name…"
-                className="flex-1 text-sm px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-300 outline-none bg-white"
-              />
-              <button
-                onClick={createFolder}
-                className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 font-medium transition-colors"
-              >
-                Add
-              </button>
-            </div>
-          )}
-
-          <nav className="py-1.5">
-            <button
-              onClick={() => setSelectedFolderId(null)}
-              className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left transition-all duration-150
-                ${
-                  selectedFolderId === null
-                    ? 'bg-blue-50 text-blue-600 font-semibold'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-            >
-              <FolderOpen
-                className={`w-4 h-4 flex-shrink-0 ${
-                  selectedFolderId === null ? 'text-blue-500' : 'text-gray-400'
-                }`}
-              />
-              All Invoices
-            </button>
-
-            {folders.map((folder, i) => (
-              <div
-                key={folder.id}
-                onClick={() => setSelectedFolderId(folder.id)}
-                style={{ animationDelay: `${i * 40}ms` }}
-                className={`animate-slide-in-left group flex items-center gap-2.5 px-4 py-2.5 text-sm cursor-pointer transition-all duration-150
-                  ${
-                    selectedFolderId === folder.id
-                      ? 'bg-blue-50 text-blue-600 font-semibold'
-                      : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-              >
-                <Folder
-                  className={`w-4 h-4 flex-shrink-0 ${
-                    selectedFolderId === folder.id ? 'text-blue-500' : 'text-gray-400'
-                  }`}
-                />
-                <span className="flex-1 truncate">{folder.name}</span>
+          <div className={`${sidebarOpen ? 'block' : 'hidden'} xl:block`}>
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-4">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">Folders</h2>
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteFolder(folder.id)
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-rose-500 rounded transition-all duration-150"
+                  onClick={() => setShowNewFolder(true)}
+                  className="rounded-xl p-2 text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"
+                  title="New folder"
                 >
-                  <Trash2 className="w-3 h-3" />
+                  <FolderPlus className="h-4 w-4" />
                 </button>
               </div>
-            ))}
 
-            {folders.length === 0 && !showNewFolder && (
-              <p className="px-4 py-4 text-xs text-gray-400 italic text-center">No folders yet</p>
-            )}
-          </nav>
+              {showNewFolder && (
+                <div className="border-b border-slate-100 bg-blue-50/40 px-3 py-3">
+                  <div className="flex gap-2">
+                    <input
+                      autoFocus
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') createFolder()
+                        if (e.key === 'Escape') {
+                          setShowNewFolder(false)
+                          setNewFolderName('')
+                        }
+                      }}
+                      placeholder="Folder name..."
+                      className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300"
+                    />
+                    <button
+                      onClick={createFolder}
+                      className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <nav className="p-2">
+                <button
+                  onClick={() => {
+                    setSelectedFolderId(null)
+                    setSidebarOpen(false)
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
+                    selectedFolderId === null
+                      ? 'bg-blue-50 font-semibold text-blue-700'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <FolderOpen
+                    className={`h-4 w-4 ${
+                      selectedFolderId === null ? 'text-blue-600' : 'text-slate-400'
+                    }`}
+                  />
+                  <span className="flex-1 truncate">All invoices</span>
+                </button>
+
+                {folders.map((folder) => (
+                  <div
+                    key={folder.id}
+                    className={`group mt-1 flex items-center gap-3 rounded-2xl px-3 py-3 text-sm transition ${
+                      selectedFolderId === folder.id
+                        ? 'bg-blue-50 font-semibold text-blue-700'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                    onClick={() => {
+                      setSelectedFolderId(folder.id)
+                      setSidebarOpen(false)
+                    }}
+                  >
+                    <Folder
+                      className={`h-4 w-4 ${
+                        selectedFolderId === folder.id ? 'text-blue-600' : 'text-slate-400'
+                      }`}
+                    />
+                    <span className="flex-1 truncate">{folder.name}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteFolder(folder.id)
+                      }}
+                      className="rounded-lg p-1 text-slate-300 opacity-0 transition group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+
+                {folders.length === 0 && !showNewFolder && (
+                  <p className="px-4 py-5 text-center text-xs italic text-slate-400">
+                    No folders yet
+                  </p>
+                )}
+              </nav>
+            </div>
+          </div>
         </aside>
 
-        <div className="flex-1 min-w-0 space-y-4">
-          {selectedFolderId && (
-            <div className="flex items-center gap-2 text-sm text-gray-600 animate-slide-in-right">
-              <Folder className="w-4 h-4 text-blue-500" />
-              <span className="font-semibold text-gray-800">
-                {folders.find((f) => f.id === selectedFolderId)?.name}
-              </span>
-              <button
-                onClick={() => setSelectedFolderId(null)}
-                className="ml-1 p-0.5 text-gray-400 hover:text-gray-700 rounded transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
+        <section className="space-y-4 min-w-0">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search invoices or vendors..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 py-3 text-sm outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-300"
+                  />
+                </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center animate-fade-in">
-            <div className="flex-1 relative min-w-0">
-              <Search
-                className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
-                aria-hidden="true"
-              />
-              <input
-                type="text"
-                placeholder="Search invoices…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl bg-white text-sm
-                           focus:ring-2 focus:ring-blue-300 outline-none transition-shadow"
-              />
-            </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {quickFilters.map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setQuickFilter(f.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition ${
+                        quickFilter === f.id
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'border border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700'
+                      }`}
+                    >
+                      {f.id === 'needs_review' && (
+                        <AlertCircle
+                          className={`h-3.5 w-3.5 ${
+                            quickFilter === f.id ? 'text-blue-200' : 'text-amber-500'
+                          }`}
+                        />
+                      )}
+                      {f.label}
+                      {f.count != null && (
+                        <span className={quickFilter === f.id ? 'text-blue-200' : 'text-slate-400'}>
+                          {f.count}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div
-              className="flex items-center gap-1.5 flex-wrap"
-              role="group"
-              aria-label="Filter invoices"
-            >
-              {QUICK_FILTERS.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setQuickFilter(f.id)}
-                  aria-pressed={quickFilter === f.id}
-                  className={[
-                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold',
-                    'transition-all duration-150 active:scale-[0.95] focus-visible:ring-2 focus-visible:ring-blue-400 outline-none',
-                    quickFilter === f.id
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'bg-white border border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700',
-                  ].join(' ')}
-                >
-                  {f.id === 'needs_review' && (
-                    <AlertCircle
-                      className={`w-3 h-3 ${quickFilter === f.id ? 'text-blue-200' : 'text-amber-400'}`}
-                      aria-hidden="true"
-                    />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  {selectedFolderId && (
+                    <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
+                      <Folder className="h-4 w-4" />
+                      <span>{folders.find((f) => f.id === selectedFolderId)?.name}</span>
+                      <button
+                        onClick={() => setSelectedFolderId(null)}
+                        className="rounded-full p-0.5 text-blue-400 hover:bg-blue-100 hover:text-blue-700"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   )}
-                  {f.label}
-                  {f.count != null && (
-                    <span className={`tabular-nums ${quickFilter === f.id ? 'text-blue-200' : 'text-gray-400'}`}>
-                      {f.count}
-                    </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center rounded-2xl bg-slate-100 p-1">
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`rounded-xl p-2 transition ${
+                        viewMode === 'list'
+                          ? 'bg-white text-blue-600 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                      title="List view"
+                    >
+                      <LayoutList className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => setViewMode('grid')}
+                      className={`rounded-xl p-2 transition ${
+                        viewMode === 'grid'
+                          ? 'bg-white text-blue-600 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                      title="Grid view"
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {invoices.some((inv) =>
+                    ['preprocessing', 'ocr_processing', 'extraction_processing'].includes(inv.status)
+                  ) && (
+                    <button
+                      onClick={resetStuckInvoices}
+                      disabled={resettingStuck}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      <RotateCcw className={`h-4 w-4 ${resettingStuck ? 'animate-spin' : ''}`} />
+                      {resettingStuck ? 'Resetting...' : 'Reset stuck'}
+                    </button>
                   )}
-                </button>
-              ))}
+
+                  <button
+                    onClick={fetchInvoices}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
             </div>
-
-            <div
-              className="flex items-center bg-gray-100 rounded-xl p-0.5 gap-0.5 flex-shrink-0"
-              role="group"
-              aria-label="View mode"
-            >
-              <button
-                onClick={() => setViewMode('list')}
-                title="List view"
-                aria-pressed={viewMode === 'list'}
-                className={`p-1.5 rounded-lg transition-all duration-150
-                  ${
-                    viewMode === 'list'
-                      ? 'bg-white shadow-sm text-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-              >
-                <LayoutList className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                title="Grid view"
-                aria-pressed={viewMode === 'grid'}
-                className={`p-1.5 rounded-lg transition-all duration-150
-                  ${
-                    viewMode === 'grid'
-                      ? 'bg-white shadow-sm text-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-              >
-                <LayoutGrid className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            {invoices.some((inv) =>
-              ['preprocessing', 'ocr_processing', 'extraction_processing'].includes(inv.status)
-            ) && (
-              <button
-                onClick={resetStuckInvoices}
-                disabled={resettingStuck}
-                title="Reset invoices stuck in a processing state back to failed so they can be reprocessed"
-                className="flex items-center gap-2 px-4 py-2.5 border border-amber-200 bg-amber-50
-                           rounded-xl hover:bg-amber-100 text-sm text-amber-700 font-medium
-                           transition-all duration-150 hover:shadow-sm flex-shrink-0
-                           disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RotateCcw className={`w-4 h-4 ${resettingStuck ? 'animate-spin' : ''}`} aria-hidden="true" />
-                {resettingStuck ? 'Resetting…' : 'Reset Stuck'}
-              </button>
-            )}
-
-            <button
-              onClick={fetchInvoices}
-              className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 bg-white
-                         rounded-xl hover:bg-gray-50 text-sm text-gray-600 font-medium
-                         transition-all duration-200 hover:shadow-sm flex-shrink-0"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-              Refresh
-            </button>
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             {loading ? (
-              <div className="divide-y divide-gray-100">
-                {[...Array(4)].map((_, i) => (
+              <div className="divide-y divide-slate-100">
+                {[...Array(5)].map((_, i) => (
                   <div key={i} className="flex items-center gap-4 px-5 py-4">
-                    <div className="w-10 h-10 rounded-xl shimmer-bg flex-shrink-0" />
+                    <div className="h-11 w-11 rounded-2xl bg-slate-200 animate-pulse" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-3.5 w-52 shimmer-bg rounded" />
-                      <div className="h-3 w-32 shimmer-bg rounded" />
+                      <div className="h-4 w-52 rounded bg-slate-200 animate-pulse" />
+                      <div className="h-3 w-32 rounded bg-slate-100 animate-pulse" />
                     </div>
-                    <div className="h-6 w-24 shimmer-bg rounded-full" />
+                    <div className="h-7 w-24 rounded-full bg-slate-100 animate-pulse" />
                   </div>
                 ))}
               </div>
             ) : filteredInvoices.length === 0 ? (
-              <div className="text-center py-16 animate-fade-in">
-                <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-8 h-8 text-blue-300 animate-float" aria-hidden="true" />
+              <div className="px-6 py-16 text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-blue-50">
+                  <FileText className="h-8 w-8 text-blue-300" />
                 </div>
-                <p className="text-gray-600 font-medium mb-1">
+                <p className="text-base font-semibold text-slate-800">
                   {searchQuery
                     ? 'No invoices match your search'
                     : quickFilter !== 'all'
-                    ? `No invoices match the "${QUICK_FILTERS.find((f) => f.id === quickFilter)?.label}" filter`
+                    ? `No invoices match the "${quickFilters.find((f) => f.id === quickFilter)?.label}" filter`
                     : 'No invoices here yet'}
                 </p>
-                <p className="text-sm text-gray-400 mb-6">
+                <p className="mt-2 text-sm text-slate-500">
                   {searchQuery
-                    ? 'Try a different search term'
+                    ? 'Try another keyword.'
                     : quickFilter !== 'all'
-                    ? 'Try a different filter or upload a new invoice'
-                    : 'Upload your first invoice to get started'}
+                    ? 'Try another filter or upload a new invoice.'
+                    : 'Upload your first invoice to get started.'}
                 </p>
 
                 {!searchQuery && quickFilter === 'all' && (
                   <Link
                     to="/upload"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white
-                               rounded-xl font-semibold text-sm hover:bg-blue-700
-                               transition-all duration-150 shadow-md hover:shadow-lg
-                               hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]"
+                    className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-lg"
                   >
-                    <Upload className="w-4 h-4" aria-hidden="true" />
-                    Upload Invoice
+                    <Upload className="h-4 w-4" />
+                    Upload invoice
                   </Link>
                 )}
               </div>
             ) : viewMode === 'list' ? (
-              <ul className="divide-y divide-gray-100" role="list">
-                {filteredInvoices.map((inv, i) => {
+              <ul className="divide-y divide-slate-100">
+                {filteredInvoices.map((inv) => {
                   const fname = folderName(inv.folder_id)
 
                   return (
-                    <li
-                      key={inv.id}
-                      style={{ animationDelay: `${i * 30}ms` }}
-                      className="animate-slide-in-left group"
-                    >
-                      <div className="flex items-center gap-4 px-5 py-4 hover:bg-gray-50 cursor-pointer transition-colors duration-150">
+                    <li key={inv.id} className="group">
+                      <div className="flex flex-col gap-4 px-5 py-4 transition hover:bg-slate-50 sm:flex-row sm:items-center">
                         <Link
                           to={`/invoices/${inv.id}`}
-                          className="flex items-center gap-3 flex-1 min-w-0"
-                          aria-label={`View ${inv.original_filename}`}
+                          className="flex min-w-0 flex-1 items-center gap-3"
                         >
-                          <div
-                            className="w-10 h-10 rounded-xl bg-gray-100 group-hover:bg-blue-100
-                                       flex items-center justify-center flex-shrink-0
-                                       transition-colors duration-200"
-                          >
-                            <FileText
-                              className="w-5 h-5 text-gray-500 group-hover:text-blue-600 transition-colors duration-200"
-                              aria-hidden="true"
-                            />
+                          <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-slate-100 transition group-hover:bg-blue-100">
+                            <FileText className="h-5 w-5 text-slate-500 group-hover:text-blue-600" />
                           </div>
 
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-gray-900 truncate leading-tight">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-slate-900">
                               {inv.original_filename}
                             </p>
-                            <p className="text-xs text-gray-400 mt-0.5 truncate">
+                            <p className="mt-1 truncate text-xs text-slate-500">
                               {metaLine(inv)}
                             </p>
                           </div>
                         </Link>
 
-                        <div className="hidden md:flex items-center flex-shrink-0 w-36 justify-center">
+                        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
                           {fname ? (
-                            <span
-                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-700
-                                         rounded-full text-xs font-medium truncate max-w-full"
-                            >
-                              <Folder className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                            <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                              <Folder className="h-3 w-3 flex-shrink-0" />
                               <span className="truncate">{fname}</span>
                             </span>
-                          ) : (
-                            <span className="text-xs text-gray-300">—</span>
-                          )}
-                        </div>
+                          ) : null}
 
-                        <div className="flex items-center gap-3 flex-shrink-0">
                           <StatusPill status={inv.status} />
 
-                          <VendorConfidenceSparkline
-                            invoiceId={inv.id}
-                            status={inv.status}
-                          />
+                          <VendorConfidenceSparkline invoiceId={inv.id} status={inv.status} />
 
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                          <div className="flex items-center gap-1">
                             <Link
                               to={`/invoices/${inv.id}`}
-                              className="p-1.5 text-gray-500 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-all duration-150"
+                              className="rounded-xl p-2 text-slate-500 transition hover:bg-blue-50 hover:text-blue-600"
                               title="View details"
                             >
-                              <Eye className="w-4 h-4" aria-hidden="true" />
+                              <Eye className="h-4 w-4" />
                             </Link>
 
                             {['uploaded', 'failed'].includes(inv.status) && (
                               <button
                                 onClick={() => processInvoice(inv.id)}
                                 disabled={processingIds.has(inv.id)}
-                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-150 hover:scale-[1.1] active:scale-[0.9] disabled:opacity-40"
+                                className="rounded-xl p-2 text-blue-600 transition hover:bg-blue-50 disabled:opacity-40"
                                 title="Process invoice"
                               >
                                 <RefreshCw
-                                  className={`w-4 h-4 ${processingIds.has(inv.id) ? 'animate-spin' : ''}`}
-                                  aria-hidden="true"
+                                  className={`h-4 w-4 ${processingIds.has(inv.id) ? 'animate-spin' : ''}`}
                                 />
                               </button>
                             )}
 
                             <button
                               onClick={() => deleteInvoice(inv.id)}
-                              className="p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-all duration-150"
+                              className="rounded-xl p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                               title="Delete invoice"
                             >
-                              <Trash2 className="w-4 h-4" aria-hidden="true" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           </div>
                         </div>
@@ -665,54 +679,34 @@ export default function Invoices() {
                 })}
               </ul>
             ) : (
-              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredInvoices.map((inv, i) => {
+              <div className="grid gap-4 p-4 sm:grid-cols-2 2xl:grid-cols-3">
+                {filteredInvoices.map((inv) => {
                   const fname = folderName(inv.folder_id)
 
                   return (
                     <div
                       key={inv.id}
-                      style={{ animationDelay: `${i * 30}ms` }}
-                      className="animate-slide-up group relative bg-white border border-gray-200
-                                 rounded-xl p-4 hover:bg-gray-50 hover:border-blue-200 hover:shadow-lg
-                                 cursor-pointer transition-all duration-200 flex flex-col gap-3"
+                      className="group flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg"
                     >
-                      <Link
-                        to={`/invoices/${inv.id}`}
-                        className="flex items-start gap-3 min-w-0"
-                        aria-label={`View ${inv.original_filename}`}
-                      >
-                        <div
-                          className="w-9 h-9 rounded-lg bg-gray-100 group-hover:bg-blue-100
-                                     flex items-center justify-center flex-shrink-0
-                                     transition-colors duration-200 mt-0.5"
-                        >
-                          <FileText
-                            className="w-4.5 h-4.5 text-gray-500 group-hover:text-blue-600 transition-colors duration-200"
-                            aria-hidden="true"
-                          />
+                      <Link to={`/invoices/${inv.id}`} className="flex items-start gap-3 min-w-0">
+                        <div className="mt-0.5 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-slate-100 transition group-hover:bg-blue-100">
+                          <FileText className="h-5 w-5 text-slate-500 group-hover:text-blue-600" />
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <p
-                            className="text-sm font-bold text-gray-900 leading-tight line-clamp-2"
-                            title={inv.original_filename}
-                          >
+                          <p className="line-clamp-2 text-sm font-semibold text-slate-900">
                             {inv.original_filename}
                           </p>
                           {inv.vendor_name && (
-                            <p className="text-xs text-gray-400 mt-0.5 truncate">{inv.vendor_name}</p>
+                            <p className="mt-1 truncate text-xs text-slate-500">{inv.vendor_name}</p>
                           )}
                         </div>
                       </Link>
 
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         {fname ? (
-                          <span
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50
-                                       text-blue-700 rounded-full text-xs font-medium truncate max-w-[48%]"
-                          >
-                            <Folder className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                            <Folder className="h-3 w-3" />
                             <span className="truncate">{fname}</span>
                           </span>
                         ) : (
@@ -722,10 +716,10 @@ export default function Invoices() {
                         <StatusPill status={inv.status} />
                       </div>
 
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <VendorConfidenceSparkline invoiceId={inv.id} status={inv.status} />
-                          <span className="text-[11px] text-gray-400">
+                          <span className="text-[11px] text-slate-500">
                             {new Date(inv.created_at).toLocaleDateString('en-AU', {
                               day: 'numeric',
                               month: 'short',
@@ -734,45 +728,46 @@ export default function Invoices() {
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                        <div className="flex items-center gap-1">
                           <Link
                             to={`/invoices/${inv.id}`}
-                            className="p-1.5 text-gray-500 hover:bg-blue-50 hover:text-blue-600 rounded-lg transition-all"
+                            className="rounded-xl p-2 text-slate-500 transition hover:bg-blue-50 hover:text-blue-600"
                             title="View"
                           >
-                            <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                            <Eye className="h-4 w-4" />
                           </Link>
 
                           {['uploaded', 'failed'].includes(inv.status) && (
                             <button
                               onClick={() => processInvoice(inv.id)}
                               disabled={processingIds.has(inv.id)}
-                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all disabled:opacity-40"
+                              className="rounded-xl p-2 text-blue-600 transition hover:bg-blue-50 disabled:opacity-40"
                               title="Process"
                             >
                               <RefreshCw
-                                className={`w-3.5 h-3.5 ${processingIds.has(inv.id) ? 'animate-spin' : ''}`}
-                                aria-hidden="true"
+                                className={`h-4 w-4 ${processingIds.has(inv.id) ? 'animate-spin' : ''}`}
                               />
                             </button>
                           )}
 
                           <button
                             onClick={() => deleteInvoice(inv.id)}
-                            className="p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-all"
+                            className="rounded-xl p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
                             title="Delete"
                           >
-                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
+
+                      <div className="text-xs text-slate-500">{metaLine(inv)}</div>
                     </div>
                   )
                 })}
               </div>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   )
