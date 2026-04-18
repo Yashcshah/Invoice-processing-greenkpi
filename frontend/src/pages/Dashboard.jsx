@@ -31,38 +31,45 @@ import {
 
 // ── Pipeline step definitions ────────────────────────────────────────────────
 const PIPELINE_STEPS = [
-  { id: 'preprocess', label: 'Preprocess',  Icon: ScanLine,       color: 'bg-blue-400' },
-  { id: 'ocr',        label: 'OCR',         Icon: Eye,            color: 'bg-blue-500' },
-  { id: 'llm',        label: 'LLM',         Icon: Sparkles,       color: 'bg-indigo-500' },
-  { id: 'gnn',        label: 'GNN',         Icon: GitBranch,      color: 'bg-violet-500' },
-  { id: 'review',     label: 'Review',      Icon: ClipboardCheck, color: 'bg-emerald-500' },
+  { id: 'preprocess', label: 'Preprocess', Icon: ScanLine, color: 'bg-blue-400' },
+  { id: 'ocr', label: 'OCR', Icon: Eye, color: 'bg-blue-500' },
+  { id: 'llm', label: 'LLM', Icon: Sparkles, color: 'bg-indigo-500' },
+  { id: 'gnn', label: 'GNN', Icon: GitBranch, color: 'bg-violet-500' },
+  { id: 'review', label: 'Review', Icon: ClipboardCheck, color: 'bg-emerald-500' },
 ]
 
-// ── KPI doughnut colour palette ──────────────────────────────────────────────
-const DOUGHNUT_COLORS = ['#2563EB', '#22C55E', '#F97316', '#6366F1']
-
 export default function Dashboard() {
-  const [stats,           setStats]           = useState({ total: 0, processing: 0, completed: 0, failed: 0 })
-  const [displayStats,    setDisplayStats]    = useState({ total: 0, processing: 0, completed: 0, failed: 0 })
-  const [recentInvoices,  setRecentInvoices]  = useState([])
-  const [loading,         setLoading]         = useState(true)
-  const [mlStats,         setMlStats]         = useState(null)
-  const [mlLoading,       setMlLoading]       = useState(true)
-  const [retraining,      setRetraining]      = useState(false)
-  const [greenStats,      setGreenStats]      = useState(null)
-  const [greenLoading,    setGreenLoading]    = useState(true)
+  const [displayStats, setDisplayStats] = useState({
+    total: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+  })
+  const [recentInvoices, setRecentInvoices] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [mlStats, setMlStats] = useState(null)
+  const [mlLoading, setMlLoading] = useState(true)
+  const [retraining, setRetraining] = useState(false)
+  const [greenStats, setGreenStats] = useState(null)
+  const [greenLoading, setGreenLoading] = useState(true)
   const [confidenceTrend, setConfidenceTrend] = useState([])
-  const [trendLoading,    setTrendLoading]    = useState(true)
+  const [trendLoading, setTrendLoading] = useState(true)
 
-  // ── count-up animation ──────────────────────────────────────────────────
   const animateCountUp = (to, key, duration = 650) => {
     const startTime = performance.now()
+
     const step = (now) => {
       const progress = Math.min((now - startTime) / duration, 1)
-      const eased    = 1 - Math.pow(1 - progress, 3)
-      setDisplayStats(prev => ({ ...prev, [key]: Math.round(to * eased) }))
+      const eased = 1 - Math.pow(1 - progress, 3)
+
+      setDisplayStats((prev) => ({
+        ...prev,
+        [key]: Math.round(to * eased),
+      }))
+
       if (progress < 1) requestAnimationFrame(step)
     }
+
     requestAnimationFrame(step)
   }
 
@@ -78,8 +85,11 @@ export default function Dashboard() {
     try {
       const { data } = await axios.get('/api/green-kpi/stats')
       setGreenStats(data)
-    } catch { /* backend may not be running */ }
-    finally { setGreenLoading(false) }
+    } catch {
+      // backend may not be running
+    } finally {
+      setGreenLoading(false)
+    }
   }
 
   const fetchMlStats = async () => {
@@ -87,8 +97,11 @@ export default function Dashboard() {
     try {
       const { data } = await axios.get('/api/learning/stats')
       setMlStats(data)
-    } catch { /* silently skip */ }
-    finally { setMlLoading(false) }
+    } catch {
+      // silently skip
+    } finally {
+      setMlLoading(false)
+    }
   }
 
   const fetchConfidenceTrend = async () => {
@@ -96,8 +109,11 @@ export default function Dashboard() {
     try {
       const { data } = await axios.get('/api/green-kpi/confidence-trend?days=30')
       setConfidenceTrend(data.trend ?? [])
-    } catch { /* silently skip */ }
-    finally { setTrendLoading(false) }
+    } catch {
+      // silently skip
+    } finally {
+      setTrendLoading(false)
+    }
   }
 
   const handleRetrain = async () => {
@@ -127,20 +143,20 @@ export default function Dashboard() {
 
       if (allInvoices) {
         const newStats = {
-          total:      allInvoices.length,
-          processing: allInvoices.filter(i =>
+          total: allInvoices.length,
+          processing: allInvoices.filter((i) =>
             ['preprocessing', 'ocr_processing', 'extraction_processing'].includes(i.status)
           ).length,
-          completed:  allInvoices.filter(i =>
+          completed: allInvoices.filter((i) =>
             ['validated', 'exported', 'extraction_complete'].includes(i.status)
           ).length,
-          failed:     allInvoices.filter(i => i.status === 'failed').length,
+          failed: allInvoices.filter((i) => i.status === 'failed').length,
         }
-        setStats(newStats)
-        animateCountUp(newStats.total,      'total')
+
+        animateCountUp(newStats.total, 'total')
         animateCountUp(newStats.processing, 'processing')
-        animateCountUp(newStats.completed,  'completed')
-        animateCountUp(newStats.failed,     'failed')
+        animateCountUp(newStats.completed, 'completed')
+        animateCountUp(newStats.failed, 'failed')
       }
 
       setRecentInvoices(invoices || [])
@@ -151,49 +167,47 @@ export default function Dashboard() {
     }
   }
 
-  // ── Chart data transforms ───────────────────────────────────────────────
-
-  // KpiDoughnutChart: GST compliant vs non-compliant
   const gstDoughnutData = greenStats?.total_invoices > 0
     ? [
         {
-          name:  'GST Compliant',
+          name: 'GST Compliant',
           value: greenStats.gst_valid_count ?? 0,
           color: '#22C55E',
         },
         {
-          name:  'Non-Compliant',
+          name: 'Non-Compliant',
           value: (greenStats.total_invoices ?? 0) - (greenStats.gst_valid_count ?? 0),
           color: '#EF4444',
         },
-      ].filter(s => s.value > 0)
+      ].filter((s) => s.value > 0)
     : []
 
-  // ClusterAccuracyChart: one bar per agent
-  const clusterBarData = (mlStats?.agents ?? []).map(a => ({
-    name:        a.cluster_label ?? `C${a.cluster_id}`,
-    accuracy:    a.accuracy_score,     // already in %
-    invoices:    a.invoice_count,
+  const clusterBarData = (mlStats?.agents ?? []).map((a) => ({
+    name: a.cluster_label ?? `C${a.cluster_id}`,
+    accuracy: a.accuracy_score,
+    invoices: a.invoice_count,
     corrections: a.correction_count,
   }))
 
-  // ── Status dot for recent invoice list ─────────────────────────────────
   const getStatusDot = (status) => {
-    if (['preprocessing', 'ocr_processing', 'extraction_processing'].includes(status))
+    if (['preprocessing', 'ocr_processing', 'extraction_processing'].includes(status)) {
       return 'bg-amber-400 animate-pulse'
-    if (['validated', 'exported', 'extraction_complete'].includes(status))
+    }
+    if (['validated', 'exported', 'extraction_complete'].includes(status)) {
       return 'bg-emerald-400'
+    }
     if (status === 'failed') return 'bg-rose-400'
     return 'bg-gray-300'
   }
 
-  // ── Loading skeleton ────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="space-y-6">
         <div className="h-56 rounded-2xl shimmer-bg" />
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-24 rounded-xl shimmer-bg" />)}
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-24 rounded-xl shimmer-bg" />
+          ))}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="h-72 rounded-xl shimmer-bg" />
@@ -206,19 +220,19 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-
-      {/* ═══════════════════════════════════════════════════════════
-          HERO CARD
-          ─────────────────────────────────────────────────────── */}
       <section
         aria-label="Invoice Processing overview"
         className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-xl shadow-blue-300/40 animate-slide-up"
       >
-        {/* Decorative blobs */}
-        <div aria-hidden="true" className="pointer-events-none absolute -top-12 -right-12 w-56 h-56 rounded-full bg-white/10 blur-3xl" />
-        <div aria-hidden="true" className="pointer-events-none absolute bottom-0 left-1/3 w-40 h-40 rounded-full bg-blue-400/30 blur-2xl" />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-12 -right-12 w-56 h-56 rounded-full bg-white/10 blur-3xl"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-0 left-1/3 w-40 h-40 rounded-full bg-blue-400/30 blur-2xl"
+        />
 
-        {/* ── Top row: title + CTA ── */}
         <div className="relative px-6 pt-7 pb-5 flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1 min-w-0">
             <p className="text-blue-200 text-xs font-semibold uppercase tracking-widest mb-1">
@@ -232,6 +246,7 @@ export default function Dashboard() {
               extract fields, validate compliance, and learn from your corrections automatically.
             </p>
           </div>
+
           <Link
             to="/upload"
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-blue-700 rounded-xl font-semibold text-sm
@@ -243,17 +258,16 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* ── 4 metrics strip ── */}
         <div
           role="list"
           aria-label="Invoice statistics"
           className="relative mx-6 mb-5 grid grid-cols-2 sm:grid-cols-4 gap-px rounded-xl overflow-hidden bg-white/10"
         >
           {[
-            { label: 'Total Invoices', value: displayStats.total,      icon: FileText,      accent: 'text-blue-200' },
-            { label: 'In Progress',    value: displayStats.processing,  icon: Clock,         accent: 'text-amber-200' },
-            { label: 'Completed',      value: displayStats.completed,   icon: CheckCircle,   accent: 'text-emerald-200' },
-            { label: 'Failed',         value: displayStats.failed,      icon: AlertTriangle, accent: 'text-rose-200' },
+            { label: 'Total Invoices', value: displayStats.total, icon: FileText, accent: 'text-blue-200' },
+            { label: 'In Progress', value: displayStats.processing, icon: Clock, accent: 'text-amber-200' },
+            { label: 'Completed', value: displayStats.completed, icon: CheckCircle, accent: 'text-emerald-200' },
+            { label: 'Failed', value: displayStats.failed, icon: AlertTriangle, accent: 'text-rose-200' },
           ].map(({ label, value, icon: Icon, accent }) => (
             <div
               key={label}
@@ -269,7 +283,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* ── Pipeline graphic ── */}
         <div
           aria-label="Processing pipeline: Preprocess, OCR, LLM, GNN, Review"
           className="relative mx-6 mb-6"
@@ -277,6 +290,7 @@ export default function Dashboard() {
           <p className="text-[11px] text-blue-200 uppercase tracking-widest font-semibold mb-3">
             Processing Pipeline
           </p>
+
           <div className="flex items-center gap-0" role="list">
             {PIPELINE_STEPS.map((step, i) => (
               <div
@@ -284,7 +298,6 @@ export default function Dashboard() {
                 role="listitem"
                 className="flex items-center flex-1 min-w-0"
               >
-                {/* Step node */}
                 <div className="flex flex-col items-center flex-shrink-0">
                   <div
                     className={`w-9 h-9 rounded-full ${step.color} flex items-center justify-center shadow-lg ring-2 ring-white/30`}
@@ -297,12 +310,8 @@ export default function Dashboard() {
                   </span>
                 </div>
 
-                {/* Connector arrow (not after last step) */}
                 {i < PIPELINE_STEPS.length - 1 && (
-                  <div
-                    aria-hidden="true"
-                    className="flex-1 flex items-center mx-1 mb-4"
-                  >
+                  <div aria-hidden="true" className="flex-1 flex items-center mx-1 mb-4">
                     <div className="flex-1 h-px bg-white/30" />
                     <svg
                       viewBox="0 0 6 8"
@@ -319,19 +328,16 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* ═══════════════════════════════════════════════════════════
-          STAT CARDS  (2×2 on mobile, 4 across on lg)
-          ─────────────────────────────────────────────────────── */}
       <div
         role="list"
         aria-label="Invoice count summary"
         className="grid grid-cols-2 lg:grid-cols-4 gap-4"
       >
         {[
-          { title: 'Total Invoices', key: 'total',      Icon: FileText,      gradient: 'from-blue-500 to-blue-600',    shadow: 'shadow-blue-200' },
-          { title: 'In Progress',    key: 'processing', Icon: Clock,         gradient: 'from-amber-400 to-orange-500', shadow: 'shadow-amber-200' },
-          { title: 'Completed',      key: 'completed',  Icon: CheckCircle,   gradient: 'from-emerald-400 to-green-500',shadow: 'shadow-emerald-200' },
-          { title: 'Failed',         key: 'failed',     Icon: AlertTriangle, gradient: 'from-rose-400 to-red-500',     shadow: 'shadow-rose-200' },
+          { title: 'Total Invoices', key: 'total', Icon: FileText, gradient: 'from-blue-500 to-blue-600', shadow: 'shadow-blue-200' },
+          { title: 'In Progress', key: 'processing', Icon: Clock, gradient: 'from-amber-400 to-orange-500', shadow: 'shadow-amber-200' },
+          { title: 'Completed', key: 'completed', Icon: CheckCircle, gradient: 'from-emerald-400 to-green-500', shadow: 'shadow-emerald-200' },
+          { title: 'Failed', key: 'failed', Icon: AlertTriangle, gradient: 'from-rose-400 to-red-500', shadow: 'shadow-rose-200' },
         ].map(({ title, key, Icon, gradient, shadow }, i) => (
           <div
             key={title}
@@ -354,9 +360,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════
-          CONFIDENCE TREND  (full-width)
-          ─────────────────────────────────────────────────────── */}
       <section
         aria-label="Extraction confidence trend"
         className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
@@ -374,6 +377,7 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
+
           {confidenceTrend.length > 0 && (
             <div className="text-right flex-shrink-0">
               <p className="text-lg font-bold text-blue-600 tabular-nums leading-none">
@@ -383,6 +387,7 @@ export default function Dashboard() {
             </div>
           )}
         </header>
+
         <div className="px-4 py-4">
           <ConfidenceTrendChart
             data={confidenceTrend}
@@ -392,20 +397,12 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* ═══════════════════════════════════════════════════════════
-          TWO-COLUMN SECTION
-          Left  — ML Cluster Agents
-          Right — Green KPI Snapshot
-          ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* ── LEFT: ML Cluster Agents ─────────────────────── */}
         <article
           aria-label="ML Cluster Agents panel"
           className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
           style={{ animationDelay: '0.15s' }}
         >
-          {/* Header */}
           <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
@@ -418,6 +415,7 @@ export default function Dashboard() {
                 </span>
               )}
             </div>
+
             <button
               onClick={handleRetrain}
               disabled={retraining}
@@ -432,39 +430,33 @@ export default function Dashboard() {
             </button>
           </header>
 
-          {/* Body */}
           {mlLoading ? (
-            /* Loading */
             <div className="px-5 py-6 space-y-2">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="h-4 rounded shimmer-bg" style={{ width: `${70 - i * 15}%` }} />
               ))}
             </div>
           ) : !mlStats?.is_trained || mlStats.total_clusters === 0 ? (
-            /* Empty */
             <div className="px-5 py-10 text-center animate-fade-in">
               <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center mx-auto mb-3">
                 <Brain className="w-6 h-6 text-violet-300 animate-float" aria-hidden="true" />
               </div>
               <p className="text-sm font-medium text-gray-600 mb-1">No clusters yet</p>
               <p className="text-xs text-gray-400 max-w-xs mx-auto">
-                Process at least 2 invoices then click{' '}
-                <span className="font-semibold text-violet-600">Retrain</span> to build the first agents.
+                Process at least 2 invoices then click <span className="font-semibold text-violet-600">Retrain</span> to build the first agents.
               </p>
             </div>
           ) : (
-            /* Data */
             <div className="px-5 py-4 space-y-4">
-              {/* Key metrics row */}
               <div
                 role="list"
                 aria-label="Cluster agent metrics"
                 className="grid grid-cols-3 gap-3"
               >
                 {[
-                  { label: 'Clusters',          value: mlStats.total_clusters,  Icon: Layers,     color: 'text-violet-600', bg: 'bg-violet-50' },
-                  { label: 'Avg Accuracy',       value: `${mlStats.avg_accuracy}%`, Icon: Zap,    color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                  { label: 'Corrections',        value: mlStats.total_corrections, Icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { label: 'Clusters', value: mlStats.total_clusters, Icon: Layers, color: 'text-violet-600', bg: 'bg-violet-50' },
+                  { label: 'Avg Accuracy', value: `${mlStats.avg_accuracy}%`, Icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                  { label: 'Corrections', value: mlStats.total_corrections, Icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-50' },
                 ].map(({ label, value, Icon, color, bg }) => (
                   <div
                     key={label}
@@ -478,7 +470,6 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* Bar chart */}
               <div>
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
                   Accuracy by cluster
@@ -486,7 +477,6 @@ export default function Dashboard() {
                 <ClusterAccuracyChart data={clusterBarData} height={150} loading={mlLoading} />
               </div>
 
-              {/* Top agent rows */}
               <ul aria-label="Top cluster agents" className="space-y-1.5">
                 {mlStats.agents.slice(0, 3).map((agent, i) => (
                   <li
@@ -507,6 +497,7 @@ export default function Dashboard() {
                         </p>
                       </div>
                     </div>
+
                     <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
                       <div className="w-16 h-1.5 rounded-full bg-gray-200 overflow-hidden">
                         <div
@@ -526,13 +517,11 @@ export default function Dashboard() {
           )}
         </article>
 
-        {/* ── RIGHT: Green KPI Snapshot ───────────────────── */}
         <article
           aria-label="Green KPI Snapshot panel"
           className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
           style={{ animationDelay: '0.2s' }}
         >
-          {/* Header */}
           <header className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
@@ -545,6 +534,7 @@ export default function Dashboard() {
                 </span>
               )}
             </div>
+
             <Link
               to="/invoices"
               className="text-xs font-medium text-emerald-600 hover:text-emerald-700 flex items-center gap-1 group"
@@ -555,14 +545,13 @@ export default function Dashboard() {
             </Link>
           </header>
 
-          {/* Body */}
           {greenLoading ? (
-            /* Loading */
             <div className="px-5 py-6 grid grid-cols-2 gap-3">
-              {[...Array(4)].map((_, i) => <div key={i} className="h-14 rounded-lg shimmer-bg" />)}
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-14 rounded-lg shimmer-bg" />
+              ))}
             </div>
           ) : !greenStats || greenStats.total_invoices === 0 ? (
-            /* Empty */
             <div className="px-5 py-10 text-center animate-fade-in">
               <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
                 <Leaf className="w-6 h-6 text-emerald-300 animate-float" aria-hidden="true" />
@@ -573,17 +562,27 @@ export default function Dashboard() {
               </p>
             </div>
           ) : (
-            /* Data */
             <div className="px-5 py-4 space-y-4">
-              {/* Key metrics */}
               <div
                 role="list"
                 aria-label="Green KPI metrics"
                 className="grid grid-cols-2 gap-3"
               >
                 {[
-                  { label: 'Total Spend',    value: `$${(greenStats.total_spend_aud || 0).toLocaleString()}`, Icon: DollarSign,  color: 'text-blue-600',    bg: 'bg-blue-50' },
-                  { label: 'GST Compliance', value: `${greenStats.gst_compliance_pct || 0}%`,                Icon: ShieldCheck,  color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                  {
+                    label: 'Total Spend',
+                    value: `$${(greenStats.total_spend_aud || 0).toLocaleString()}`,
+                    Icon: DollarSign,
+                    color: 'text-blue-600',
+                    bg: 'bg-blue-50',
+                  },
+                  {
+                    label: 'GST Compliance',
+                    value: `${greenStats.gst_compliance_pct || 0}%`,
+                    Icon: ShieldCheck,
+                    color: 'text-emerald-600',
+                    bg: 'bg-emerald-50',
+                  },
                 ].map(({ label, value, Icon, color, bg }) => (
                   <div key={label} role="listitem" className={`rounded-xl p-3 ${bg} flex items-center gap-2.5`}>
                     <Icon className={`w-5 h-5 ${color} flex-shrink-0`} aria-hidden="true" />
@@ -595,7 +594,6 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* GST Doughnut chart */}
               <div>
                 <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
                   GST compliance
@@ -609,7 +607,6 @@ export default function Dashboard() {
                 />
               </div>
 
-              {/* Sustainability tags */}
               {greenStats.top_sustainability_tags?.length > 0 && (
                 <div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
@@ -628,30 +625,18 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* GST compliance chip */}
               <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-50">
                 <KpiChip
-                  type={
-                    (greenStats.gst_compliance_pct ?? 0) >= 90
-                      ? 'gst_ok'
-                      : 'gst_issue'
-                  }
+                  type={(greenStats.gst_compliance_pct ?? 0) >= 90 ? 'gst_ok' : 'gst_issue'}
                 />
-                {(greenStats.qbcc_detected ?? 0) > 0 && (
-                  <KpiChip type="qbcc_missing" />
-                )}
-                {(greenStats.retention_detected ?? 0) > 0 && (
-                  <KpiChip type="retention_clause" />
-                )}
+                {(greenStats.qbcc_detected ?? 0) > 0 && <KpiChip type="qbcc_missing" />}
+                {(greenStats.retention_detected ?? 0) > 0 && <KpiChip type="retention_clause" />}
               </div>
             </div>
           )}
         </article>
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════
-          RECENT INVOICES
-          ─────────────────────────────────────────────────────── */}
       <section
         aria-label="Recent invoices"
         className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden animate-slide-up hover:shadow-lg transition-shadow duration-200"
@@ -662,6 +647,7 @@ export default function Dashboard() {
             <FileText className="w-4 h-4 text-blue-500" aria-hidden="true" />
             <h2 className="text-sm font-semibold text-gray-900">Recent Invoices</h2>
           </div>
+
           <Link
             to="/invoices"
             className="text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1 group"
@@ -719,6 +705,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                   </div>
+
                   <div className="flex items-center gap-2.5 flex-shrink-0 ml-3">
                     <StatusPill status={invoice.status} />
                     <ArrowRight

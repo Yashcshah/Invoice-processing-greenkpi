@@ -19,6 +19,10 @@ import {
 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STATUS CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+
 const STATUS_STYLES = {
   uploaded: 'bg-gray-100 text-gray-700',
   preprocessing: 'bg-yellow-100 text-yellow-700',
@@ -43,6 +47,13 @@ const STEPS = [
 
 const STEP_ORDER = ['preprocessed', 'ocr_complete', 'extraction_complete', 'validated']
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SANITIZATION LAYER
+// These helpers defend against malformed extractor output: concatenated
+// fields, trailing labels, and missing values. They let the preview render
+// correctly even when the backend returns garbage.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const getFieldValue = (fields, name) => {
   const field = fields.find((f) => f.field_name === name)
   return field?.validated_value ?? field?.normalized_value ?? field?.raw_value ?? ''
@@ -53,10 +64,88 @@ const cleanText = (value) => {
   return String(value).replace(/\s+/g, ' ').trim()
 }
 
+// Known "noise" phrases that commonly bleed in from adjacent cells.
+// Matching is case-insensitive and only the LEADING portion is kept.
+const TRAILING_LABEL_PATTERNS = [
+  /\s+Tariff\s+Type\b.*$/i,
+  /\s+Invoice\s+Date\b.*$/i,
+  /\s+Due\s+Date\b.*$/i,
+  /\s+Billing\s+Period\b.*$/i,
+  /\s+(Restaurant|Residential|Commercial|Industrial|Retail|Office)\b.*$/i,
+  /\s+General\s+Business\b.*$/i,
+  /\s+(Peak|Off-?Peak|Total)\s+Usage\b.*$/i,
+  /\s+Electricity\s+Usage\b.*$/i,
+  /\s+Meter\s+ID\b.*$/i,
+  /\s+Property\s+Type\b.*$/i,
+  /\s+Supply\s+Address\b.*$/i,
+]
+
+/**
+ * Remove any trailing "label + value" garbage that was glued onto the
+ * end of a field during extraction. For example:
+ *   "05/03/2026 Restaurant"                   → "05/03/2026"
+ *   "01/02/2026 to 28/02/2026 Tariff Type ..." → "01/02/2026 to 28/02/2026"
+ */
+const stripTrailingLabels = (value) => {
+  let out = cleanText(value)
+  for (const pattern of TRAILING_LABEL_PATTERNS) {
+    out = out.replace(pattern, '').trim()
+  }
+  return out
+}
+
+/**
+ * Pull a DD/MM/YYYY (or YYYY-MM-DD) out of a value and discard anything
+ * that follows. Handles bled dates like "05/03/2026 Restaurant".
+ */
+const cleanDate = (value) => {
+  const text = cleanText(value)
+  if (!text) return ''
+
+  const ddmmyyyy = text.match(/\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/)
+  if (ddmmyyyy) return ddmmyyyy[1]
+
+  const isoDate = text.match(/\b(\d{4}-\d{2}-\d{2})\b/)
+  if (isoDate) return isoDate[1]
+
+  return stripTrailingLabels(text)
+}
+
+/**
+ * Pull a full billing period ("DD/MM/YYYY to DD/MM/YYYY") out of a value
+ * and discard trailing garbage (e.g. "Tariff Type General Business").
+ */
+const cleanBillingPeriod = (value) => {
+  const text = cleanText(value)
+  if (!text) return ''
+
+  const range = text.match(
+    /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\s*(?:to|-|–|—|→)\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/i
+  )
+  if (range) return `${range[1]} to ${range[2]}`
+
+  return stripTrailingLabels(text)
+}
+
+/**
+ * Scan a bled value for a known label phrase (e.g. "Tariff Type") and
+ * return the tail portion as a separately-derivable value.
+ *   "01/02/2026 to 28/02/2026 Tariff Type General Business"
+ *     → { head: "01/02/2026 to 28/02/2026", tail: "General Business" }
+ */
+const extractBledTail = (value, labelRegex) => {
+  const text = cleanText(value)
+  const m = text.match(labelRegex)
+  if (!m) return { head: text, tail: '' }
+  const tail = text.slice(m.index + m[0].length).trim()
+  const head = text.slice(0, m.index).trim()
+  return { head, tail }
+}
+
 const isProbablyNoisy = (value) => {
   const text = cleanText(value)
   if (!text) return true
-  if (text.length > 160) return true
+  if (text.length > 180) return true
 
   const badKeywords = [
     'invoice details',
@@ -66,14 +155,9 @@ const isProbablyNoisy = (value) => {
     'electricity usage summary',
     'electricity usage charges',
     'total amount due',
-    'gst',
     'subtotal',
     'description',
     'usage',
-    'rate',
-    'amount',
-    'invoice date',
-    'due date',
     'billing period',
   ]
 
@@ -100,16 +184,24 @@ const textOrDash = (value) => {
   return text || '-'
 }
 
+// Parse a money-ish string to a number, or null if unparseable.
+const parseMoney = (value) => {
+  if (value == null || value === '' || value === '-') return null
+  const cleaned = String(value).replace(/[^0-9.-]/g, '')
+  if (!cleaned) return null
+  const num = Number(cleaned)
+  return Number.isFinite(num) ? num : null
+}
+
 const money = (value) => {
   if (value == null || value === '' || value === '-') return '-'
-  const cleaned = String(value).replace(/[^0-9.-]/g, '')
-  const num = Number(cleaned)
-  if (Number.isNaN(num)) return String(value)
+  const num = parseMoney(value)
+  if (num == null) return String(value)
   return `$${num.toFixed(2)}`
 }
 
 const formatDate = (value) => {
-  const text = cleanText(value)
+  const text = cleanDate(value)
   if (!text) return '-'
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
@@ -141,25 +233,93 @@ const formatRate = (rate, quantity) => {
   return `$${num.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}${suffix}`
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PREVIEW STYLE
+// ─────────────────────────────────────────────────────────────────────────────
 
+const getPreviewStyle = () => ({
+  subtitle: 'Billing Statement',
+  infoTitle: 'Customer & Site Information',
+  chargesTitle: 'Charges Summary',
+  customerLabel: 'Customer',
+  siteLabel: 'Site',
+  addressLabel: 'Address',
+  meterLabel: 'Meter ID',
+  accent: '#0d7f7a',
+  sectionBg: '#e9f2f2',
+  tableHeaderBg: '#2f9e9e',
+  summaryBg: '#f4f4f4',
+  accountTitle: 'ACCOUNT',
+  totalLabel: 'TOTAL',
+})
 
-const getPreviewStyle = () => {
-  return {
-    subtitle: 'Billing Statement',
-    infoTitle: 'Customer & Site Information',
-    chargesTitle: 'Charges Summary',
-    customerLabel: 'Customer',
-    siteLabel: 'Site',
-    addressLabel: 'Address',
-    meterLabel: 'Meter ID',
-    accent: '#0d7f7a',
-    sectionBg: '#e9f2f2',
-    tableHeaderBg: '#2f9e9e',
-    summaryBg: '#f4f4f4',
-    accountTitle: 'ACCOUNT',
-    totalLabel: 'TOTAL',
+// ─────────────────────────────────────────────────────────────────────────────
+// DERIVED VALUES
+// Helpers that synthesise values the extractor failed to produce.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * If backend returned NO line items, but we have enough raw field data
+ * to reconstruct them (e.g. peak_usage / off_peak_usage / total_usage
+ * quantities + rates), synthesise a minimal line-item list so the
+ * Charges Summary table isn't empty.
+ */
+const synthesiseLineItems = (fields) => {
+  const rows = []
+
+  const tryRow = (descKey, qtyKey, rateKey, totalKey, label) => {
+    const qty = safeShortField(fields, qtyKey, '', 30)
+    const rate = safeShortField(fields, rateKey, '', 30)
+    const total = safeShortField(fields, totalKey, '', 30)
+    if (!qty && !rate && !total) return
+    rows.push({
+      id: `derived-${descKey}`,
+      description: safeShortField(fields, descKey, label, 80) || label,
+      quantity: qty || '-',
+      unit_price: rate || '-',
+      total_price: total || '-',
+    })
   }
+
+  tryRow('peak_description', 'peak_usage', 'peak_rate', 'peak_amount', 'Peak Usage')
+  tryRow('off_peak_description', 'off_peak_usage', 'off_peak_rate', 'off_peak_amount', 'Off-Peak Usage')
+  tryRow('total_usage_description', 'total_usage', 'total_usage_rate', 'total_usage_amount', 'Total Usage')
+
+  return rows
 }
+
+/**
+ * Compute (or correct) the grand total.
+ *  - If backend total equals subtotal and GST is non-zero, the backend
+ *    almost certainly mapped the subtotal value into total_amount. In
+ *    that case we return subtotal + gst.
+ *  - If backend total is missing but subtotal + gst are present, return
+ *    their sum.
+ *  - Otherwise return the backend value unchanged.
+ */
+const reconcileTotal = (subtotalRaw, gstRaw, totalRaw) => {
+  const subtotal = parseMoney(subtotalRaw)
+  const gst = parseMoney(gstRaw)
+  const total = parseMoney(totalRaw)
+
+  if (subtotal != null && gst != null) {
+    const expected = subtotal + gst
+    if (total == null) return { value: expected.toFixed(2), corrected: true }
+    if (Math.abs(total - subtotal) < 0.01 && gst > 0.01) {
+      return { value: expected.toFixed(2), corrected: true }
+    }
+    if (Math.abs(total - expected) > 0.05) {
+      return { value: expected.toFixed(2), corrected: true }
+    }
+  }
+
+  if (total != null) return { value: total.toFixed(2), corrected: false }
+  return { value: '-', corrected: false }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVOICE PREVIEW CARD
+// ─────────────────────────────────────────────────────────────────────────────
 
 function InvoicePreviewCard({
   extractedFields,
@@ -185,59 +345,93 @@ function InvoicePreviewCard({
     safeShortField(extractedFields, 'invoice_id', '', 40) ||
     '-'
 
-  const invoiceDate = safeShortField(extractedFields, 'invoice_date', '-', 30) || '-'
-  const dueDate = safeShortField(extractedFields, 'due_date', '-', 30) || '-'
-  const billingPeriod = safeField(extractedFields, 'billing_period', '-') || '-'
+  // ── Dates: always strip trailing garbage ──
+  const invoiceDateRaw = getFieldValue(extractedFields, 'invoice_date')
+  const dueDateRaw = getFieldValue(extractedFields, 'due_date')
+  const invoiceDate = cleanDate(invoiceDateRaw) || '-'
+  const dueDate = cleanDate(dueDateRaw) || '-'
+
+  // ── Billing period: split off any trailing "Tariff Type …" tail ──
+  const billingPeriodRaw = safeField(extractedFields, 'billing_period', '')
+  const { head: billingPeriodClean, tail: billingPeriodTail } = extractBledTail(
+    billingPeriodRaw,
+    /\s+Tariff\s+Type\b/i
+  )
+  const billingPeriod = cleanBillingPeriod(billingPeriodClean) || '-'
+
+  // ── Site / customer / address. If invoice_date bled with a site type
+  //    word, recover it as a site fallback. ──
+  const invoiceDateTail = cleanText(invoiceDateRaw).replace(cleanDate(invoiceDateRaw), '').trim()
 
   const customerName =
     safeShortField(extractedFields, 'customer_name') ||
     safeShortField(extractedFields, 'company_name') ||
     '-'
 
-  const siteName =
+  const siteNameRaw =
     safeShortField(extractedFields, 'site_name', '', 60) ||
     safeShortField(extractedFields, 'property_type', '', 60) ||
+    invoiceDateTail ||
     '-'
+  const siteName = siteNameRaw === '' ? '-' : siteNameRaw
 
   const supplyAddress =
     safeField(extractedFields, 'supply_address', '') ||
     safeField(extractedFields, 'property_address', '') ||
     '-'
 
+  // ── Tariff type: fall back to whatever was bled off billing_period ──
   const tariffType =
     safeShortField(extractedFields, 'tariff_type', '', 60) ||
     safeShortField(extractedFields, 'plan_name', '', 60) ||
     safeShortField(extractedFields, 'service_type', '', 60) ||
+    billingPeriodTail ||
     '-'
 
   const meterId = safeShortField(extractedFields, 'meter_id', '-', 40) || '-'
 
-  const subtotal = safeShortField(extractedFields, 'subtotal', '-', 20) || '-'
-  const gst =
+  const subtotalRaw = safeShortField(extractedFields, 'subtotal', '', 20)
+  const gstRaw =
     safeShortField(extractedFields, 'gst', '', 20) ||
-    safeShortField(extractedFields, 'tax_amount', '', 20) ||
-    '-'
-  const totalAmount =
+    safeShortField(extractedFields, 'tax_amount', '', 20)
+  const totalRaw =
     safeShortField(extractedFields, 'total_amount', '', 20) ||
-    safeShortField(extractedFields, 'total_amount_due', '', 20) ||
-    '-'
+    safeShortField(extractedFields, 'total_amount_due', '', 20)
 
-const cleanedLineItems = (lineItems || [])
-  .filter((item) => {
-    const desc = cleanText(item.description)
-    const qty = cleanText(item.quantity)
-    const rate = cleanText(item.unit_price)
-    const total = cleanText(item.total_price)
+  const { value: reconciledTotal, corrected: totalWasCorrected } = reconcileTotal(
+    subtotalRaw,
+    gstRaw,
+    totalRaw
+  )
 
-    return desc || qty || rate || total
-  })
-  .map((item, index) => ({
-    id: item.id ?? index + 1,
-    description: cleanText(item.description) || '-',
-    quantity: cleanText(item.quantity) || '-',
-    unit_price: cleanText(item.unit_price) || '-',
-    total_price: cleanText(item.total_price) || '-',
-  }))
+  const subtotal = subtotalRaw || '-'
+  const gst = gstRaw || '-'
+
+  // ── Line items: clean, then synthesise if backend returned none ──
+  let cleanedLineItems = (lineItems || [])
+    .filter((item) => {
+      const desc = cleanText(item.description)
+      const qty = cleanText(item.quantity)
+      const rate = cleanText(item.unit_price)
+      const total = cleanText(item.total_price)
+      return desc || qty || rate || total
+    })
+    .map((item, index) => ({
+      id: item.id ?? index + 1,
+      description: cleanText(item.description) || '-',
+      quantity: cleanText(item.quantity) || '-',
+      unit_price: cleanText(item.unit_price) || '-',
+      total_price: cleanText(item.total_price) || '-',
+    }))
+
+  let lineItemsAreSynthesised = false
+  if (cleanedLineItems.length === 0) {
+    const synthesised = synthesiseLineItems(extractedFields)
+    if (synthesised.length > 0) {
+      cleanedLineItems = synthesised
+      lineItemsAreSynthesised = true
+    }
+  }
 
   const EditableValue = ({ fieldNames, displayValue, className = '' }) => {
     const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames]
@@ -259,12 +453,22 @@ const cleanedLineItems = (lineItems || [])
     )
   }
 
-  
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm animate-slide-up hover:shadow-lg transition-shadow duration-200">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40">
-        <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
-        <p className="text-xs text-gray-400 mt-0.5">Click a value to edit it</p>
+      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/40 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-bold text-gray-900">Invoice Preview</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Click a value to edit it</p>
+        </div>
+        {totalWasCorrected && (
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200"
+            title="The extractor's total didn't match Subtotal + GST. Showing the reconciled figure."
+          >
+            <AlertCircle className="w-3 h-3" aria-hidden="true" />
+            total auto-reconciled
+          </span>
+        )}
       </div>
 
       <div className="p-4 md:p-8 bg-gray-50">
@@ -341,6 +545,19 @@ const cleanedLineItems = (lineItems || [])
                     />
                   </td>
                 </tr>
+                {tariffType !== '-' && (
+                  <tr>
+                    <td className="border border-gray-300 px-3 py-2 font-medium">
+                      Tariff Type
+                    </td>
+                    <td className="border border-gray-300 px-3 py-2" colSpan={3}>
+                      <EditableValue
+                        fieldNames={['tariff_type', 'plan_name', 'service_type']}
+                        displayValue={textOrDash(tariffType)}
+                      />
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -417,8 +634,14 @@ const cleanedLineItems = (lineItems || [])
               className="font-bold text-[18px] mb-3"
               style={{ color: ui.accent, fontFamily: 'Georgia, serif' }}
             >
-             {ui.chargesTitle}
+              {ui.chargesTitle}
             </h3>
+
+            {lineItemsAreSynthesised && (
+              <p className="text-[11px] text-amber-600 mb-1">
+                Line items reconstructed from field-level extractions.
+              </p>
+            )}
 
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-[15px] bg-white">
@@ -491,8 +714,16 @@ const cleanedLineItems = (lineItems || [])
                   <td className="border border-gray-300 px-3 py-2 text-right font-bold">
                     <EditableValue
                       fieldNames={['total_amount', 'total_amount_due']}
-                      displayValue={money(totalAmount)}
+                      displayValue={money(reconciledTotal)}
                     />
+                    {totalWasCorrected && (
+                      <span
+                        className="ml-2 text-[10px] font-semibold text-amber-600 align-middle"
+                        title="Reconciled from Subtotal + GST"
+                      >
+                        ✓ reconciled
+                      </span>
+                    )}
                   </td>
                 </tr>
               </tbody>
@@ -669,7 +900,7 @@ function FieldRow({ field, align, editingFieldId, editValue, setEditValue, savin
   )
 }
 
-// ── Inline GST check ──────────────────────────────────────────────────────────
+// ── Inline GST & total check ──────────────────────────────────────────────────
 
 function computeGstStatus(fields) {
   const find = name => {
@@ -680,12 +911,18 @@ function computeGstStatus(fields) {
   const tax      = find('tax_amount')
   const total    = find('total_amount')
   if (!subtotal || !tax) return null
-  const expected = subtotal * 0.1
-  const ok = Math.abs(tax - expected) / expected < 0.05   // within 5 %
+
+  const expectedTax = subtotal * 0.1
+  const gstOk = Math.abs(tax - expectedTax) / expectedTax < 0.05   // within 5 %
+
+  // Also flag total mismatch: expected = subtotal + tax
+  const expectedTotal = subtotal + tax
+  const totalOk = total == null ? true : Math.abs(total - expectedTotal) / expectedTotal < 0.01
+
   const hasRetention = fields.some(f =>
     (f.validated_value ?? f.normalized_value ?? f.raw_value ?? '').toLowerCase().includes('retention')
   )
-  return { ok, hasRetention }
+  return { ok: gstOk, totalOk, hasRetention }
 }
 
 // ── ExtractedFieldsPanel ──────────────────────────────────────────────────────
@@ -830,6 +1067,12 @@ function ExtractedFieldsPanel({
           aria-label="Compliance flags"
         >
           <KpiChip type={gst.ok ? 'gst_ok' : 'gst_issue'} />
+          {!gst.totalOk && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200">
+              <AlertCircle className="w-3 h-3" aria-hidden="true" />
+              total mismatch
+            </span>
+          )}
           {gst.hasRetention && <KpiChip type="retention_clause" />}
         </div>
       )}
@@ -904,7 +1147,6 @@ function OcrCollapsible({ ocrResults }) {
 
 // ── Green KPI strip ───────────────────────────────────────────────────────────
 
-// Sustainability tag types that map directly to KpiChip types
 const SUSTAIN_TAG_TYPES = new Set([
   'solar', 'carbon_offset', 'renewable_energy', 'recycled_materials', 'energy_efficiency',
 ])
@@ -921,25 +1163,20 @@ function GreenKpiStrip({ data, loading }) {
   const flags    = data.compliance_flags   ?? {}
   const tags     = data.sustainability_tags ?? []
 
-  // Build ordered chip list
   const chips = []
 
-  // GST compliance chip
   if (flags.gst_valid != null) {
     chips.push(<KpiChip key="gst" type={flags.gst_valid ? 'gst_ok' : 'gst_issue'} />)
   }
 
-  // QBCC chip (only when QBCC keywords detected)
   if (flags.qbcc_detected) {
     chips.push(<KpiChip key="qbcc" type="qbcc_missing" />)
   }
 
-  // Retention clause chip
   if (flags.retention_detected) {
     chips.push(<KpiChip key="retention" type="retention_clause" />)
   }
 
-  // Sustainability tags — map known ones to KpiChip types, unknown ones as plain pills
   tags.forEach((tag, i) => {
     const type = SUSTAIN_TAG_TYPES.has(tag) ? tag : null
     if (type) {
@@ -958,7 +1195,6 @@ function GreenKpiStrip({ data, loading }) {
 
   if (!chips.length) return null
 
-  // Summary text
   const tagCount   = tags.length
   const gstLabel   = flags.gst_valid == null ? '' : flags.gst_valid ? 'GST OK' : 'GST Issue'
   const summaryParts = []
@@ -972,18 +1208,15 @@ function GreenKpiStrip({ data, loading }) {
       role="region"
       aria-label="Green KPI snapshot"
     >
-      {/* Left: title */}
       <div className="flex-shrink-0">
         <p className="text-xs font-bold text-gray-700 leading-none">Green KPI</p>
         <p className="text-[10px] text-gray-400 mt-0.5">Compliance &amp; sustainability</p>
       </div>
 
-      {/* Centre: chips */}
       <div className="flex flex-wrap gap-1.5 flex-1">
         {chips}
       </div>
 
-      {/* Right: summary text */}
       {summary && (
         <p className="text-[11px] text-gray-400 font-medium flex-shrink-0 whitespace-nowrap">
           {summary}
@@ -1086,7 +1319,6 @@ export default function InvoiceDetail() {
   }
 
   const startRealtime = () => {
-    // Remove any existing channel before creating a new one
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current)
       channelRef.current = null
@@ -1102,7 +1334,6 @@ export default function InvoiceDetail() {
           setInvoice(prev => prev ? { ...prev, ...updated } : updated)
 
           if (!PROCESSING_STATUSES.includes(updated.status)) {
-            // Processing finished — fetch full data (fields, OCR, line items)
             setProcessing(false)
             fetchData()
             supabase.removeChannel(channel)
@@ -1111,7 +1342,6 @@ export default function InvoiceDetail() {
         }
       )
       .subscribe((status) => {
-        // If Realtime subscription fails, fall back to polling
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[Realtime] subscription failed, falling back to polling')
           supabase.removeChannel(channel)
@@ -1209,7 +1439,18 @@ export default function InvoiceDetail() {
 
   const startEditField = (field) => {
     setEditingFieldId(field.id)
-    setEditValue(field.validated_value ?? field.normalized_value ?? field.raw_value ?? '')
+    // Pre-populate the editor with the *cleaned* value when editing dates
+    // or billing periods, so users don't have to manually delete garbage.
+    const raw = field.validated_value ?? field.normalized_value ?? field.raw_value ?? ''
+    let seed = raw
+    if (field.field_name === 'invoice_date' || field.field_name === 'due_date') {
+      seed = cleanDate(raw) || raw
+    } else if (field.field_name === 'billing_period') {
+      seed = cleanBillingPeriod(raw) || raw
+    } else if (isProbablyNoisy(raw)) {
+      seed = stripTrailingLabels(raw)
+    }
+    setEditValue(seed)
   }
 
   const cancelEdit = () => {
@@ -1279,7 +1520,6 @@ export default function InvoiceDetail() {
   const currentStepIdx = STEP_ORDER.indexOf(invoice?.status ?? '')
   const ocrText = ocrResults[0]?.raw_text || ''
 
-  // Average confidence across all extracted fields (0–100 %)
   const avgConfidence = (() => {
     const scores = extractedFields
       .map(f => f.confidence_score)
@@ -1288,7 +1528,6 @@ export default function InvoiceDetail() {
     return Math.round(scores.reduce((a, b) => a + Number(b), 0) / scores.length * 100)
   })()
 
-  // Human-readable file metadata string
   const fileMeta = [
     invoice?.file_type?.toUpperCase() || 'FILE',
     invoice?.file_size_bytes
@@ -1348,8 +1587,6 @@ export default function InvoiceDetail() {
           role="region"
           aria-label="Invoice summary"
         >
-
-          {/* ── LEFT: file identity ───────────────────────────────── */}
           <div className="flex items-center gap-3 min-w-0">
             <div
               aria-hidden="true"
@@ -1370,15 +1607,11 @@ export default function InvoiceDetail() {
             </div>
           </div>
 
-          {/* ── CENTER: status ────────────────────────────────────── */}
           <div className="flex items-center justify-start sm:justify-center flex-shrink-0">
             <StatusPill status={invoice?.status} />
           </div>
 
-          {/* ── RIGHT: confidence chip + action buttons ───────────── */}
           <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end flex-shrink-0">
-
-            {/* Avg confidence chip */}
             {avgConfidence !== null && (
               <span
                 aria-label={`Average extraction confidence: ${avgConfidence}%`}
@@ -1404,7 +1637,6 @@ export default function InvoiceDetail() {
               </span>
             )}
 
-            {/* Export PDF */}
             <button
               onClick={exportPreviewAsPdf}
               disabled={exportingPdf || (!hasFields && !hasLineItems)}
@@ -1419,7 +1651,6 @@ export default function InvoiceDetail() {
               {exportingPdf ? 'Exporting…' : 'Export PDF'}
             </button>
 
-            {/* Process / Reprocess */}
             {(canProcess || isActivelyProcessing || processing) ? (
               <button
                 onClick={processInvoice}
@@ -1456,7 +1687,6 @@ export default function InvoiceDetail() {
           </div>
         </div>
 
-        {/* ── Process error banner ──────────────────────────────────────── */}
         {processError && (
           <div
             role="alert"
@@ -1467,7 +1697,6 @@ export default function InvoiceDetail() {
           </div>
         )}
 
-        {/* ── Progress stepper (visible while pipeline is running) ─────── */}
         {(processing || isActivelyProcessing) && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 animate-slide-up">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Pipeline progress</p>
@@ -1558,22 +1787,13 @@ export default function InvoiceDetail() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          TWO-COLUMN GRID
-          col-span-2 → Invoice Preview   col-span-1 → Extracted Fields
-          ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-
-        {/* ── LEFT col (2/3): Invoice Preview ───────────────────── */}
         <div className="md:col-span-2 flex flex-col gap-2">
-
-          {/* Helper hint */}
           <p className="text-xs text-gray-400 flex items-center gap-1.5">
             <Edit2 className="w-3 h-3 text-blue-400" aria-hidden="true" />
             Click any highlighted value to edit
           </p>
 
-          {/* Preview card */}
           <div
             className="bg-blue-50 rounded-xl shadow-sm p-4 overflow-auto"
             style={{ maxHeight: '72vh' }}
@@ -1601,7 +1821,6 @@ export default function InvoiceDetail() {
           </div>
         </div>
 
-        {/* ── RIGHT col (1/3): Extracted Fields ─────────────────── */}
         <div className="md:col-span-1">
           <ExtractedFieldsPanel
             fields={extractedFields}
@@ -1622,7 +1841,6 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      {/* ── Green KPI Strip (full width, below the preview + fields grid) ──── */}
       {(greenKpiLoading || greenKpiData) && (
         <GreenKpiStrip data={greenKpiData} loading={greenKpiLoading} />
       )}
