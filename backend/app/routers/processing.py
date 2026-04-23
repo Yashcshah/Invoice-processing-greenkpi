@@ -428,6 +428,24 @@ async def _run_green_kpi_pipeline(
     except Exception as exc:
         green_kpi_svc.log_stage(gkpi_id, "validate", "error", 0, {"error": str(exc)})
 
+    # ── Stage 4.5: ABN + GST registration check ──────────────────────────
+    t0 = _time.time()
+    try:
+        from app.services.abn_service import run_abn_gst_check
+        abn_result = await run_abn_gst_check(validation_result.get("fields", extracted_fields))
+        # Merge ABN/GST flags into the existing compliance_flags dict
+        validation_result.setdefault("compliance_flags", {}).update(abn_result)
+        dur = int((_time.time() - t0) * 1000)
+        green_kpi_svc.log_stage(gkpi_id, "abn_check", "ok", dur, {
+            "abn": abn_result.get("abn_normalised"),
+            "format_valid": abn_result.get("abn_format_valid"),
+            "checksum_valid": abn_result.get("abn_checksum_valid"),
+            "gst_math_valid": abn_result.get("gst_math_valid"),
+            "api_used": abn_result.get("abn_checked_via_api"),
+        })
+    except Exception as exc:
+        green_kpi_svc.log_stage(gkpi_id, "abn_check", "error", 0, {"error": str(exc)})
+
     # ── Stage 5: Store green_kpi.invoice_data ─────────────────────────────
     t0 = _time.time()
     try:

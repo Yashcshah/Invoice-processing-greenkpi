@@ -978,6 +978,61 @@ const SUSTAIN_TAG_TYPES = new Set([
   'energy_efficiency',
 ])
 
+function AbnBadge({ flags }) {
+  const norm     = flags.abn_normalised
+  const fmt      = flags.abn_format_valid
+  const checksum = flags.abn_checksum_valid
+  const active   = flags.abn_active          // null = not checked via API
+  const gstReg   = flags.abn_gst_registered  // null = not checked via API
+  const entity   = flags.abn_entity_name
+  const apiUsed  = flags.abn_checked_via_api
+
+  if (!norm && fmt == null) return null      // no ABN extracted at all
+
+  // Determine overall ABN colour
+  let colour = 'gray'
+  if (fmt === false) colour = 'red'
+  else if (checksum === false) colour = 'orange'
+  else if (apiUsed) colour = active && gstReg ? 'green' : 'red'
+  else colour = 'blue'                       // local-only: format/checksum passed
+
+  const colourMap = {
+    green:  'bg-green-50 border-green-200 text-green-700',
+    red:    'bg-red-50 border-red-200 text-red-700',
+    orange: 'bg-orange-50 border-orange-200 text-orange-700',
+    blue:   'bg-blue-50 border-blue-200 text-blue-700',
+    gray:   'bg-gray-50 border-gray-200 text-gray-500',
+  }
+
+  const label = fmt === false
+    ? 'Invalid ABN'
+    : checksum === false
+      ? `ABN checksum fail`
+      : apiUsed
+        ? active && gstReg
+          ? `ABN GST-Reg ✓`
+          : !active
+            ? `ABN Not Active`
+            : `Not GST-Reg`
+        : `ABN ${norm ? norm.replace(/(\d{2})(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4') : '–'}`
+
+  const title = [
+    norm ? `ABN: ${norm}` : 'No ABN extracted',
+    checksum != null ? `Checksum: ${checksum ? 'valid' : 'invalid'}` : '',
+    entity ? `Entity: ${entity}` : '',
+    apiUsed ? `GST registered: ${gstReg ? 'yes' : 'no'}` : 'ABR API not called (no GUID configured)',
+  ].filter(Boolean).join(' | ')
+
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${colourMap[colour]}`}
+    >
+      {label}
+    </span>
+  )
+}
+
 function GreenKpiStrip({ data, loading }) {
   if (loading) {
     return <div className="h-14 rounded-2xl shimmer-bg" aria-hidden="true" />
@@ -989,18 +1044,25 @@ function GreenKpiStrip({ data, loading }) {
   const tags = data.sustainability_tags ?? []
   const chips = []
 
+  // ── GST math validity ────────────────────────────────────────────────
   if (flags.gst_valid != null) {
     chips.push(<KpiChip key="gst" type={flags.gst_valid ? 'gst_ok' : 'gst_issue'} />)
   }
 
-  if (flags.qbcc_detected) {
-    chips.push(<KpiChip key="qbcc" type="qbcc_missing" />)
+  // ── ABN badge ────────────────────────────────────────────────────────
+  if (flags.abn_format_valid != null || flags.abn_normalised) {
+    chips.push(<AbnBadge key="abn" flags={flags} />)
   }
 
-  if (flags.retention_detected) {
+  // ── QBCC / Retention ────────────────────────────────────────────────
+  if (flags.qbcc_applicable) {
+    chips.push(<KpiChip key="qbcc" type="qbcc_missing" />)
+  }
+  if (flags.retention_applicable) {
     chips.push(<KpiChip key="retention" type="retention_clause" />)
   }
 
+  // ── Sustainability tags ──────────────────────────────────────────────
   tags.forEach((tag, i) => {
     const type = SUSTAIN_TAG_TYPES.has(tag) ? tag : null
     if (type) {
@@ -1021,16 +1083,22 @@ function GreenKpiStrip({ data, loading }) {
 
   const tagCount = tags.length
   const gstLabel = flags.gst_valid == null ? '' : flags.gst_valid ? 'GST OK' : 'GST Issue'
+  const abnLabel = flags.abn_checked_via_api
+    ? flags.abn_gst_registered ? 'ABN Active' : 'ABN Issue'
+    : flags.abn_format_valid != null
+      ? flags.abn_format_valid && flags.abn_checksum_valid ? 'ABN Valid' : 'ABN Invalid'
+      : ''
   const summaryParts = []
   if (tagCount > 0) summaryParts.push(`${tagCount} green tag${tagCount !== 1 ? 's' : ''}`)
   if (gstLabel) summaryParts.push(gstLabel)
+  if (abnLabel) summaryParts.push(abnLabel)
   const summary = summaryParts.join(' · ')
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-shadow hover:shadow-lg sm:flex-row sm:items-center">
       <div className="flex-shrink-0">
         <p className="text-sm font-semibold text-slate-900">Green KPI</p>
-        <p className="text-xs text-slate-500">Compliance and sustainability</p>
+        <p className="text-xs text-slate-500">Compliance & sustainability</p>
       </div>
 
       <div className="flex flex-1 flex-wrap gap-1.5">{chips}</div>
