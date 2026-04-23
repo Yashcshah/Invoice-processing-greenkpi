@@ -1,6 +1,6 @@
 # InvoiceAI — Automated Invoice Processing System
 
-AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding, Graph Neural Network reasoning with node-level field prediction, ML cluster agents, sustainability tagging, Australian compliance checks, and folder organisation.
+AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding, Graph Neural Network reasoning with node-level field prediction, ML cluster agents, automatic ABN + GST validation via the Australian Business Register, sustainability tagging, Australian compliance checks, and folder organisation.
 
 ---
 
@@ -8,12 +8,13 @@ AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding,
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18 + Vite · Tailwind CSS · React Router · Lucide React · Supabase Realtime |
+| Frontend | React 18 + Vite · Tailwind CSS · React Router · Recharts · Lucide React · Supabase Realtime |
 | Backend | Python 3.11–3.13 · FastAPI · Uvicorn |
 | OCR | Tesseract · PyMuPDF (PDFs) · OpenCV (preprocessing) · TrOCR fallback (HF API) |
 | LLM | Gemini 2.5 Flash (multimodal — image + OCR text) · few-shot correction injection |
 | Graph / GNN | scikit-learn (graph features) · PyTorch + torch-geometric (GAT + NODE_PRED head, optional) |
 | ML Clustering | TF-IDF + KMeans (vendor cluster agents) |
+| ABN Validation | Australian Business Register (ABR) JSON API · local mod-89 checksum |
 | Database / Auth / Storage | Supabase (PostgreSQL + RLS + Realtime + Storage) |
 
 ---
@@ -21,20 +22,22 @@ AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding,
 ## Features
 
 - **Upload invoices** — drag & drop PDF, PNG, JPG, TIFF (up to 10 MB)
-- **OCR pipeline** — Tesseract for images, PyMuPDF direct extraction for PDFs; auto-falls back to TrOCR (Microsoft HF model) when Tesseract confidence < 60%
+- **OCR pipeline** — Tesseract for images, PyMuPDF direct extraction for PDFs; auto-falls back to TrOCR when Tesseract confidence < 60%
 - **Multimodal LLM** — Gemini 2.5 Flash analyses image + OCR text → structured JSON fields + sustainability tags
 - **LLM adaptation** — user corrections accumulate in DB and are injected as few-shot examples into every future Gemini prompt (TRAIN_LLM feedback arc)
 - **Graph construction** — invoice OCR boxes become a document graph; LLM field assignments guide node semantic typing (LLM_EMB → FEAT bridge)
 - **GNN reasoning** — 2-layer GAT with a NODE_PRED classification head (9 field types); runs in lite mode without PyTorch
-- **Node-level field prediction** — GAT classifies every graph node into a field type (VENDOR_NAME, TOTAL, LINE_QTY, etc.) and extracts or reinforces field values from the highest-confidence nodes
+- **Node-level field prediction** — GAT classifies every graph node into a field type and extracts or reinforces field values from the highest-confidence nodes
 - **ML cluster agents** — TF-IDF + KMeans groups invoices by vendor/format; each cluster learns from user corrections
 - **Self-improving accuracy** — every correction trains the agent and fine-tunes the GAT; next invoice from the same vendor is extracted better automatically
+- **Automatic ABN + GST validation** — every invoice processed automatically checks ABN format, mod-89 checksum, and optionally calls the ABR API to confirm active registration and GST status
 - **Supabase Realtime** — invoice status updates pushed to the UI via WebSocket; polling fallback if Realtime is unavailable
-- **Green KPI** — sustainability tag extraction, GST reconciliation, QBCC and retention compliance checks, spend tracking
+- **Green KPI** — sustainability tag extraction, GST reconciliation, ABN compliance, QBCC and retention checks, spend tracking
 - **Folder organisation** — create folders (e.g. "AGL", "Utilities") and the AI suggests the right folder per invoice
 - **Inline field editing** — correct any extracted value directly in the UI; corrections feed the learning loop
-- **Confidence scores** — animated bar per field; GNN/LLM/agent-corrected fields show boosted confidence
-- **Dashboard** — animated stats, ML Agents panel (cluster accuracy), Green KPI panel (spend, tags, compliance), recent invoices
+- **Confidence scores** — horizontal bar chart per field (Recharts); GNN/LLM/agent-corrected fields show boosted confidence
+- **Dashboard** — animated stats, ML Agents panel, Green KPI panel (spend, tags, compliance, confidence trend chart)
+- **List + Grid views** — Invoices page has filter chips (All / Needs Review / GST Issues) and a List/Grid segmented control
 
 ---
 
@@ -72,8 +75,15 @@ GNN Reasoning  (GAT 2-layer → NODE_PRED classification head → per-node field
 Consistency Layer  (GST reconciliation · date normalisation · QBCC · retention · tag catalogue)
       │
       ▼
+ABN + GST Validation  ← NEW
+      │  • ABN format check (11 digits)
+      │  • ABN mod-89 checksum
+      │  • GST math check (tax ≈ subtotal × 10 %)
+      │  └─ ABR API lookup if ABR_GUID set → confirms Active + GST-registered
+      ▼
 Store → invoices + extracted_fields + line_items (core tables)
       │   → green_kpi.invoices + invoice_data + processing_logs (analytics layer)
+      │   └─ compliance_flags includes ABN + GST results
       │
       ▼
 User corrects fields in InvoiceDetail  (Supabase Realtime status updates)
@@ -111,6 +121,9 @@ OCR Text ───────►  (vision + text)  ──► LLM Field Values �
                                                                 │
                                                     Consistency Layer
                                                     (GST · QBCC · dates)
+                                                                │
+                                                    ABN + GST Validation
+                                                    (format · checksum · ABR API)
                                                                 │
                                                       Final Field Values
 ```
@@ -153,10 +166,19 @@ invoice-processing/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.jsx        # Stats · ML Agents · Green KPI · Recent invoices
 │   │   │   ├── Upload.jsx           # Drag-and-drop upload
-│   │   │   ├── Invoices.jsx         # Invoice list + folder sidebar
-│   │   │   └── InvoiceDetail.jsx    # OCR text · extracted fields · Supabase Realtime
+│   │   │   ├── Invoices.jsx         # List/Grid view · filter chips · folder sidebar
+│   │   │   └── InvoiceDetail.jsx    # Fields · OCR collapsible · Green KPI strip · Realtime
 │   │   ├── components/
-│   │   │   └── Layout.jsx           # Sidebar + top bar
+│   │   │   ├── Layout.jsx           # Sidebar + top bar
+│   │   │   ├── charts/
+│   │   │   │   ├── FieldConfidenceMiniChart.jsx  # Horizontal bar chart per field
+│   │   │   │   ├── ConfidenceTrendChart.jsx
+│   │   │   │   ├── KpiDoughnutChart.jsx
+│   │   │   │   └── ClusterAccuracyChart.jsx
+│   │   │   └── ui/
+│   │   │       ├── StatusPill.jsx   # Colour-coded status badge (handles extraction_complete)
+│   │   │       ├── ConfidenceBar.jsx
+│   │   │       └── KpiChip.jsx
 │   │   └── lib/
 │   │       └── supabase.js
 │   ├── tailwind.config.js
@@ -165,10 +187,10 @@ invoice-processing/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                  # FastAPI app + routers
-│   │   ├── config.py                # Settings from .env (incl. GEMINI_API_KEY, HF_TOKEN)
+│   │   ├── config.py                # Settings from .env (incl. ABR_GUID, GEMINI_API_KEY)
 │   │   ├── routers/
 │   │   │   ├── invoices.py          # Invoice CRUD + folder assign
-│   │   │   ├── processing.py        # Full pipeline orchestration
+│   │   │   ├── processing.py        # Full pipeline + reset-stuck endpoint
 │   │   │   ├── extraction.py        # Field validation + green_kpi.corrections write
 │   │   │   ├── folders.py           # Folder CRUD
 │   │   │   ├── learning.py          # ML cluster agent + GAT retrain endpoints
@@ -184,6 +206,7 @@ invoice-processing/
 │   │       ├── graph_builder.py       # Document graph + LLM_EMB→FEAT node typing
 │   │       ├── gnn_service.py         # 2-layer GAT + NODE_PRED head + fine-tune
 │   │       ├── validation_service.py  # GST · QBCC · sustainability tags
+│   │       ├── abn_service.py         # ABN checksum + ABR API lookup (NEW)
 │   │       ├── green_kpi_service.py   # green_kpi.* DB writes + stats
 │   │       └── supabase_client.py
 │   ├── ml_models/                   # Auto-created; .pkl + .pt model files (git-ignored)
@@ -204,6 +227,7 @@ invoice-processing/
 - Supabase account
 - Gemini API key (free at https://aistudio.google.com/apikey) — optional but recommended
 - HuggingFace token — optional, only needed for TrOCR fallback
+- ABR GUID — optional, enables live ABN lookup (free at https://api.abn.business.gov.au/)
 
 ---
 
@@ -233,6 +257,48 @@ In your Supabase project → **SQL Editor**, run these **two files in order**:
 
 1. `backend/supabase_schema.sql` — base tables, RLS, storage bucket, RPC functions
 2. `backend/green_kpi_schema.sql` — Green KPI analytics tables (`green_kpi` schema)
+
+Then also run this to create the remaining tables used by the learning pipeline:
+
+```sql
+-- Cluster assignments
+CREATE TABLE IF NOT EXISTS public.invoice_clusters (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id   uuid REFERENCES public.invoices(id) ON DELETE CASCADE,
+  cluster_id   integer NOT NULL,
+  confidence   float,
+  assigned_at  timestamptz DEFAULT now(),
+  UNIQUE (invoice_id)
+);
+
+-- Line items extracted from invoices
+CREATE TABLE IF NOT EXISTS public.line_items (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id      uuid REFERENCES public.invoices(id) ON DELETE CASCADE,
+  line_number     integer,
+  description     text,
+  quantity        float,
+  unit_price      float,
+  total_price     float,
+  tax_amount      float,
+  confidence_score float,
+  created_at      timestamptz DEFAULT now()
+);
+
+-- Learned correction rules per cluster
+CREATE TABLE IF NOT EXISTS public.extraction_rules (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  cluster_id  integer,
+  field_name  text NOT NULL,
+  rule_type   text,
+  pattern     text,
+  replacement text,
+  priority    integer DEFAULT 0,
+  is_active   boolean DEFAULT true,
+  created_at  timestamptz DEFAULT now(),
+  updated_at  timestamptz DEFAULT now()
+);
+```
 
 Then go to **Supabase → Settings → API → Extra Search Path** and add `green_kpi`.
 
@@ -264,12 +330,18 @@ API_HOST=0.0.0.0
 API_PORT=8000
 DEBUG=True
 
-# OCR
+# OCR (Windows path — adjust for macOS/Linux)
 TESSERACT_PATH=C:/Program Files/Tesseract-OCR/tesseract.exe
 OCR_ENGINE=tesseract
+POPPLER_PATH=C:/Program Files/poppler-25.12.0/Library/bin
 
 # Green KPI — Gemini API (free tier available)
 GEMINI_API_KEY=your-gemini-key
+
+# ABN Lookup — Australian Business Register (optional)
+# Register free at: https://api.abn.business.gov.au/
+# Leave blank to skip live ABN lookup (local checksum + GST math still runs)
+ABR_GUID=your-abr-guid
 
 # TrOCR fallback — HuggingFace token (optional)
 # Only used when Tesseract confidence < 60%
@@ -283,7 +355,7 @@ GNN_ENABLED=true
 
 Start the server:
 ```bash
-uvicorn app.main:app --reload-dir app
+uvicorn app.main:app --reload --port 8000
 # API at http://localhost:8000
 # Docs at http://localhost:8000/docs
 ```
@@ -308,7 +380,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 Start the dev server:
 ```bash
 npm run dev
-# App at http://localhost:3000
+# App at http://localhost:5173
 ```
 
 ---
@@ -331,8 +403,8 @@ Restart the backend — it detects PyTorch automatically and switches to full GA
 1. **Sign up** at `/signup` — creates your account and organisation
 2. **Upload** — go to Upload, drag & drop invoice files
 3. **Process** — click the ↻ button on any invoice to run the full pipeline
-4. **Review** — open the invoice to see extracted fields; edit any wrong value inline
-5. **Green KPI** — Dashboard shows sustainability tags, GST compliance %, total spend after processing
+4. **Review** — open the invoice to see extracted fields with confidence bars; edit any wrong value inline
+5. **Green KPI strip** — each invoice detail shows compliance chips: GST validity, ABN status, QBCC, retention, sustainability tags
 6. **Organise** — create folders in the Invoices sidebar; the AI suggests the right folder per vendor
 7. **Retrain agents** — after correcting a few invoices, click **Retrain** on the Dashboard
 
@@ -340,7 +412,7 @@ Restart the backend — it detects PyTorch automatically and switches to full GA
 
 ## Green KPI
 
-The Green KPI layer runs automatically after every invoice is processed. It adds:
+The Green KPI layer runs automatically after every invoice is processed. No user action required.
 
 ### Sustainability tagging
 Tags extracted by Gemini from line item descriptions and vendor context:
@@ -350,11 +422,25 @@ Tags extracted by Gemini from line item descriptions and vendor context:
 `electric_vehicle` · `sustainable_packaging` · `energy_efficiency` · `other_green`
 
 ### Australian compliance checks
+
 | Check | Logic |
 |-------|-------|
-| **GST** | Validates 10% tax against subtotal; infers `tax_amount` if missing |
+| **GST math** | Validates tax_amount ≈ subtotal × 10% (±2%); infers tax if missing |
+| **ABN format** | Strips spaces/dashes, checks 11 digits |
+| **ABN checksum** | Weighted mod-89 algorithm — catches transcription errors |
+| **ABN active** | ABR API: confirms AbnStatus = "Active" (requires ABR_GUID) |
+| **GST registered** | ABR API: confirms supplier holds a valid GST registration (requires ABR_GUID) |
 | **QBCC** | Flags building/construction invoices (Queensland licencing context) |
 | **Retention** | Detects progress-claim / retention clauses in line item descriptions |
+
+### ABN Badge colours (Invoice Detail → Green KPI strip)
+
+| Colour | Meaning |
+|--------|---------|
+| 🟢 Green | ABN active + GST-registered (confirmed via ABR API) |
+| 🔵 Blue | ABN format + checksum valid (local only — no ABR_GUID configured) |
+| 🟠 Orange | ABN checksum failed |
+| 🔴 Red | ABN format invalid or supplier not GST-registered |
 
 ### Dashboard Green KPI panel
 - Total spend (AUD)
@@ -363,16 +449,43 @@ Tags extracted by Gemini from line item descriptions and vendor context:
 - Total corrections learned
 - Top sustainability tags with counts
 - Status breakdown: completed / needs review / failed
+- Daily confidence trend chart (last 30 days)
 
 ### Green KPI API endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/green-kpi/stats` | Aggregate stats for the dashboard |
+| `GET` | `/api/green-kpi/confidence-trend` | Daily avg confidence (last N days) |
 | `GET` | `/api/green-kpi/invoices` | List with sustainability metadata |
 | `GET` | `/api/green-kpi/invoices/{id}` | Full detail + processing stages |
 | `POST` | `/api/green-kpi/corrections` | Submit correction (feeds learning loop) |
-| `GET` | `/api/green-kpi/compliance/{id}` | GST / QBCC / retention report |
+| `GET` | `/api/green-kpi/compliance/{id}` | GST / ABN / QBCC / retention report |
+
+---
+
+## ABN + GST Validation
+
+The `abn_service.py` module runs automatically as **Stage 4.5** of the pipeline (after Consistency validation, before storing to the DB). It requires no user action.
+
+### What always runs (no API key needed)
+1. **ABN extraction** — reads `abn` / `supplier_abn` / `vendor_abn` from extracted fields
+2. **Format check** — confirms 11 digits after stripping spaces and dashes
+3. **Checksum** — weighted mod-89 algorithm (same as the ATO standard)
+4. **GST math** — `tax_amount ≈ subtotal × 10%` within ±2%
+
+### What runs with ABR_GUID
+5. **Live ABR lookup** — calls `abr.business.gov.au` JSON endpoint
+6. **Active status** — confirms `AbnStatus == "Active"`
+7. **GST registration** — checks `Gst` date field is populated (means registered)
+8. **Entity name** — returns the registered business name for display
+
+### Getting an ABR GUID (free)
+1. Go to https://api.abn.business.gov.au/
+2. Register with your email
+3. Add the GUID to `backend/.env` as `ABR_GUID=your-guid`
+
+Results are stored in `green_kpi.invoice_data.compliance_flags` and shown instantly in the Green KPI strip on the Invoice Detail page.
 
 ---
 
@@ -433,8 +546,6 @@ Invoice processed
 | 12–19 | Semantic type one-hot (8 classes) | **LLM field values + layout hints** |
 
 The 8 semantic type classes are: `header · vendor · date · amount · line_item · tax · footer · unknown`
-
-LLM field assignments (vendor name text, total value, date strings) directly populate the semantic type one-hot — bridging the LLM embedding signal into graph node features.
 
 ### NODE_PRED classification head
 
@@ -510,8 +621,9 @@ Requires `HF_TOKEN` in `.env`. If not set, Tesseract output is used regardless o
 | `GET` | `/api/invoices/{id}` | Invoice + OCR + fields + line items |
 | `DELETE` | `/api/invoices/{id}` | Delete invoice and storage file |
 | `PATCH` | `/api/invoices/{id}/folder` | Assign or unassign a folder |
-| `POST` | `/api/processing/process` | Trigger full pipeline |
+| `POST` | `/api/processing/process` | Trigger full pipeline (ABN check included) |
 | `GET` | `/api/processing/status/{id}` | Poll processing status |
+| `POST` | `/api/processing/reset-stuck` | Reset preprocessing/OCR/extraction stuck invoices to failed |
 | `POST` | `/api/extraction/validate` | Save validated field values + write corrections |
 | `GET` | `/api/folders` | List all folders |
 | `POST` | `/api/folders` | Create a folder |
@@ -520,10 +632,11 @@ Requires `HF_TOKEN` in `.env`. If not set, Tesseract output is used regardless o
 | `GET` | `/api/learning/stats` | Cluster agent statistics |
 | `POST` | `/api/learning/assign/{id}` | Re-assign invoice to cluster |
 | `GET` | `/api/green-kpi/stats` | Green KPI dashboard stats |
+| `GET` | `/api/green-kpi/confidence-trend` | Daily confidence trend (last N days) |
 | `GET` | `/api/green-kpi/invoices` | Green KPI invoice list |
 | `GET` | `/api/green-kpi/invoices/{id}` | Green KPI invoice detail |
 | `POST` | `/api/green-kpi/corrections` | Submit field correction |
-| `GET` | `/api/green-kpi/compliance/{id}` | Compliance report |
+| `GET` | `/api/green-kpi/compliance/{id}` | Compliance report (GST · ABN · QBCC · retention) |
 
 ---
 
@@ -535,23 +648,33 @@ Update `TESSERACT_PATH` in `backend/.env` to the full path of `tesseract.exe`.
 **CORS error in browser**
 Ensure backend is on port 8000 and `vite.config.js` proxies `/api/*` to it.
 
+**ECONNREFUSED in Vite terminal**
+The backend is not running. Start it: `uvicorn app.main:app --reload --port 8000` from the `backend/` directory.
+
 **Storage upload failing**
 Run storage policies in `supabase_schema.sql` in the Supabase SQL Editor.
 
 **Database RLS blocking queries**
 Ensure `SUPABASE_SERVICE_KEY` is the service role key (not anon key) in `backend/.env`.
 
+**Invoices showing "Processing" after they completed**
+The `StatusPill` now correctly maps `extraction_complete` → green Completed pill. If you see this after an old deployment, do a hard refresh (`Ctrl+Shift+R`).
+
+**Invoices stuck in "Processing" after server restart**
+Background tasks are killed when uvicorn restarts. Call the reset endpoint to unblock them:
+```bash
+curl -X POST http://localhost:8000/api/processing/reset-stuck
+```
+Or click the amber **Reset Stuck** button that appears in the Invoices list when stuck invoices are detected.
+
+**ABN check not running / always shows blue badge**
+`ABR_GUID` is not set in `backend/.env`. The local checksum still runs (blue = format + checksum valid). To enable live ABR lookup, register free at https://api.abn.business.gov.au/ and add the GUID to `.env`.
+
+**Pydantic ValidationError: abr_guid Extra inputs are not permitted**
+Add `abr_guid: str = ""` to the `Settings` class in `backend/app/config.py`. This was fixed in v0.8.
+
 **Python 3.13 install errors**
 `easyocr` and `spacy` have been removed. Run `pip install -r requirements.txt` — all remaining packages support Python 3.13.
-
-**VS Code / Pylance out of memory**
-Add to VS Code `settings.json`:
-```json
-{
-  "python.analysis.exclude": ["**/node_modules", "**/venv", "**/.venv", "**/__pycache__"],
-  "python.analysis.indexing": false
-}
-```
 
 **ML Agents panel shows "No clusters yet"**
 Process at least 2 invoices, then click **Retrain** on the Dashboard.
@@ -564,9 +687,6 @@ Process at least 2 invoices, then click **Retrain** on the Dashboard.
 **LLM stage skipped**
 Set `GEMINI_API_KEY` in `backend/.env`. Without it, the LLM stage is skipped silently and regex + GNN-lite extraction is used instead.
 
-**LLM correction shots not appearing**
-The corrections table is in the `green_kpi` schema. Ensure that schema is applied and the Extra Search Path includes `green_kpi`.
-
 **GNN running in lite mode**
 Install PyTorch and torch-geometric (see Step 5). Lite mode still improves confidence scores — full GAT mode adds neural network weights and NODE_PRED classification on top.
 
@@ -576,41 +696,62 @@ Ensure Realtime is enabled for the `invoices` table in Supabase → Database →
 **TrOCR fallback not triggering**
 Set `HF_TOKEN` in `backend/.env`. Without it the fallback is disabled and Tesseract output is always used.
 
+**VS Code / Pylance out of memory**
+Add to VS Code `settings.json`:
+```json
+{
+  "python.analysis.exclude": ["**/node_modules", "**/venv", "**/.venv", "**/__pycache__"],
+  "python.analysis.indexing": false
+}
+```
+
 ---
 
 ## Changelog
 
+### v0.8 — ABN Validation + UI Overhaul
+
+- **Automatic ABN + GST validation** — new `abn_service.py` runs as Stage 4.5 on every invoice processed:
+  - Local ABN format check (11 digits) and mod-89 checksum — always runs, no key needed
+  - GST math check: `tax_amount ≈ subtotal × 10%` (±2%) — always runs
+  - Live ABR API lookup when `ABR_GUID` is configured — confirms ABN Active + GST-registered
+  - Results stored in `compliance_flags` and shown in the Green KPI strip automatically
+- **AbnBadge** — colour-coded ABN status chip in the Green KPI strip (green/blue/orange/red)
+- **FieldConfidenceMiniChart** — horizontal Recharts bar chart in Invoice Detail showing per-field confidence; colour-coded green/blue/orange by confidence threshold
+- **OcrCollapsible** — OCR raw text section is now a collapsible card (collapsed by default) with smooth grid-rows Tailwind animation
+- **GreenKpiStrip** — full-width compliance + sustainability strip between the field grid and line items
+- **Invoices list redesign** — filter chips (All / Needs Review / GST Issues), List/Grid segmented control, `VendorConfidenceSparkline`, folder pills, `StatusPill` on each row
+- **StatusPill fix** — `extraction_complete`, `validated`, `exported` now correctly map to the green Completed pill
+- **Reset Stuck endpoint** — `POST /api/processing/reset-stuck` bulk-resets invoices stuck in mid-pipeline states back to `failed` for reprocessing
+- **Micro-animations** — `hover:shadow-lg transition-shadow` on all cards; `hover:scale-[1.02] active:scale-[0.98]` on primary buttons; `animate-fade-in` on filter bar
+- **`abr_guid` added to Settings** — prevents Pydantic `ValidationError` on startup
+
 ### v0.7 — NODE_PRED + LLM Adaptation + Supabase Realtime
-- **NODE_PRED**: GAT now has a `Linear(32 → 9)` classification head predicting the field role of every graph node (VENDOR_NAME, TOTAL, INVOICE_DATE, etc.); predictions extract missing fields and reinforce confidence on matching values
-- **LLM_EMB → FEAT bridge**: LLM-extracted field values now guide node semantic type assignment in `graph_builder.py` — converting Gemini's span knowledge into graph node features
-- **TRAIN_LLM**: `encode_invoice()` fetches recent corrections from `green_kpi.corrections` and injects them as few-shot examples into every Gemini prompt — prompt-based LLM adaptation without LoRA
+- **NODE_PRED**: GAT now has a `Linear(32 → 9)` classification head predicting the field role of every graph node
+- **LLM_EMB → FEAT bridge**: LLM-extracted field values now guide node semantic type assignment in `graph_builder.py`
+- **TRAIN_LLM**: `encode_invoice()` fetches recent corrections from `green_kpi.corrections` and injects them as few-shot examples into every Gemini prompt
 - **Supabase Realtime**: `InvoiceDetail` replaced HTTP polling with `postgres_changes` WebSocket subscription; graceful polling fallback on channel error
 - **GAT fine-tuning from corrections**: `Retrain` now also runs `retrain_from_corrections()` — rebuilds document graphs for corrected invoices and fine-tunes GAT with a contrastive margin loss
 - **TrOCR fallback**: when Tesseract confidence < 60%, automatically calls `microsoft/trocr-large-printed` via HuggingFace Inference API
-- **green_kpi.corrections write**: `/extraction/validate` now writes field corrections to `green_kpi.corrections` automatically, feeding all three retraining arcs (GNN · LLM · Cluster)
-- **Bug fixes**: corrected `builder.build()` arg order in GAT retrain path
+- **green_kpi.corrections write**: `/extraction/validate` now writes field corrections to `green_kpi.corrections` automatically
 
 ### v0.6 — Green KPI Architecture (GNN + LLM + Sustainability)
-- **Multimodal LLM**: Gemini 2.5 Flash analyses invoice image + OCR text → structured JSON, sustainability tags, layout segments, compliance hints
-- **Document graph**: OCR word boxes become graph nodes with 20-dim features; 4 edge types (spatial, semantic, hierarchical, logical)
-- **GNN (GAT)**: 2-layer Graph Attention Network refines field confidence; auto-detects full (PyTorch + PyG) vs lite mode
-- **Validation service**: GST reconciliation, date normalisation, QBCC/retention compliance, sustainability tag catalogue
-- **Green KPI tables**: `green_kpi.invoices`, `invoice_data`, `corrections`, `processing_logs`
-- **Green KPI Dashboard panel**: spend, confidence, GST compliance %, sustainability tag pills, status breakdown
-- **5 new API endpoints** under `/api/green-kpi`
-- **Feature flags**: `GREEN_KPI_ENABLED`, `LLM_ENABLED`, `GNN_ENABLED` — stages degrade gracefully when disabled
+- Multimodal LLM: Gemini 2.5 Flash analyses invoice image + OCR text
+- Document graph: OCR word boxes become graph nodes with 20-dim features; 4 edge types
+- GNN (GAT): 2-layer Graph Attention Network refines field confidence
+- Validation service: GST reconciliation, date normalisation, QBCC/retention compliance
+- Green KPI tables and 5 new API endpoints
 
 ### v0.5 — ML Cluster Agents + Security
 - TF-IDF + KMeans clustering; per-cluster learned correction patterns
 - Self-improving extraction: corrections → `cluster_agents.learned_patterns` → auto-fix on next invoice
 - Dashboard ML Agents panel with accuracy bars and Retrain button
-- `.gitignore` added — protects `.env`, `ml_models/`, `node_modules/`
 
 ### v0.4 — UI/UX Animations Round 2
-- Page transitions, count-up stats, InvoiceDetail step tracker, shimmer skeletons, edit glow, folder suggestion wiggle
+- Page transitions, count-up stats, InvoiceDetail step tracker, shimmer skeletons
 
 ### v0.3 — UI/UX Animations Round 1
-- Shimmer loading, hover lift cards, toast notifications, staggered rows, frosted glass header, custom Tailwind keyframes
+- Shimmer loading, hover lift cards, toast notifications, staggered rows, frosted glass header
 
 ### v0.2 — Folder Classification
 - User-created folders, AI folder suggestion from vendor name, folder sidebar + filter
