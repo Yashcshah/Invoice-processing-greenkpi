@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # HuggingFace token — for TrOCR fallback (optional)
     hf_token: str = ""
 
+    # ABN Lookup — Australian Business Register
+    # Register free at: https://api.abn.business.gov.au/
+    abr_guid: str = ""
+
     # Green KPI pipeline feature flags
     # Set to False to skip stages (useful during development / limited quota)
     green_kpi_enabled: bool = True
