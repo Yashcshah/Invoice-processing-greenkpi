@@ -124,7 +124,7 @@ class FieldExtractionService:
     def _load_default_rules(self) -> Dict[str, List[Dict]]:
         return {
             "invoice_number": [
-                {"type": "row_label", "labels": ["Invoice ID", "Invoice Number", "Invoice No", "Invoice #"]},
+                {"type": "row_label", "labels": ["Invoice ID", "Invoice Number", "Invoice No", "Invoice #", "Tax Invoice"]},
                 {"type": "regex",
                  "pattern": r"(?:Invoice\s*(?:ID|Number|No|#)?)[\s:.\-]*([A-Z0-9][A-Z0-9\-_\/]{2,40})",
                  "flags": re.IGNORECASE},
@@ -136,7 +136,7 @@ class FieldExtractionService:
                  "flags": re.IGNORECASE},
             ],
             "due_date": [
-                {"type": "row_label", "labels": ["Due Date", "Payment Due", "Pay By", "Due"]},
+                {"type": "row_label", "labels": ["Due Date", "Payment Due", "Pay By", "Pay by", "Due"]},
                 {"type": "regex",
                  "pattern": r"(?:Due Date|Payment Due|Pay By|Due)[\s:.\-]*(\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4})",
                  "flags": re.IGNORECASE},
@@ -172,22 +172,25 @@ class FieldExtractionService:
                  "flags": re.IGNORECASE},
             ],
             "meter_id": [
-                {"type": "row_label", "labels": ["Meter ID", "Meter", "NMI"]},
+                {"type": "row_label", "labels": ["Meter ID", "Meter", "NMI", "Account Number", "Collection ID", "Account No"]},
                 {"type": "regex",
-                 "pattern": r"(?:Meter\s*ID|Meter|NMI)[\s:.\-]*([A-Z0-9\-_]{4,40})",
+                 "pattern": r"(?:Meter\s*ID|Meter|NMI|Account\s*Number|Account\s*No|Collection\s*ID)[\s:.\-]*([A-Z0-9][A-Z0-9\-_ ]{3,40})",
                  "flags": re.IGNORECASE},
             ],
             "customer_name": [
-                {"type": "row_label", "labels": ["Customer", "Account Name", "Bill To"]},
+                {"type": "property_details_section", "role": "customer"},
                 {"type": "customer_site_section", "role": "customer"},
+                {"type": "row_label", "labels": ["Customer", "Account Name", "Bill To"]},
             ],
             "site_name": [
-                {"type": "row_label", "labels": ["Site", "Property", "Premises", "Location"]},
+                {"type": "property_details_section", "role": "site"},
                 {"type": "customer_site_section", "role": "site"},
+                {"type": "row_label", "labels": ["Site", "Premises", "Location"]},
             ],
             "supply_address": [
-                {"type": "row_label", "labels": ["Supply Address", "Address", "Service Address"]},
+                {"type": "property_details_section", "role": "address"},
                 {"type": "customer_site_section", "role": "address"},
+                {"type": "row_label", "labels": ["Supply Address", "Address", "Service Address", "Delivery Location", "Collection Address", "Service address"]},
             ],
             "tariff_type": [
                 {"type": "row_label", "labels": ["Tariff Type", "Tariff", "Plan", "Plan Name", "Service Type"]},
@@ -249,9 +252,12 @@ class FieldExtractionService:
                 }
 
             if rule["type"] == "row_label":
-                value = self._extract_from_same_row_box(word_boxes, rule["labels"], field_name)
+                # Prefer text-line extraction first. For multi-page PDFs, word boxes from
+                # different pages can share the same y-position and cause column/page bleed
+                # such as Customer + text from page 2. Raw PyMuPDF text lines are safer.
+                value = self._extract_label_value_from_lines(lines, rule["labels"], field_name)
                 if not value:
-                    value = self._extract_label_value_from_lines(lines, rule["labels"], field_name)
+                    value = self._extract_from_same_row_box(word_boxes, rule["labels"], field_name)
                 if value:
                     return self._pack_result(field_name, value, "row_label", 0.93, rule_id)
 
@@ -269,6 +275,11 @@ class FieldExtractionService:
                 value = self._extract_vendor_name(text, word_boxes)
                 if value:
                     return self._pack_result(field_name, value, "vendor_top", 0.75, rule_id)
+
+            elif rule["type"] == "property_details_section":
+                value = self._extract_property_details_section(word_boxes, lines, rule.get("role", "customer"))
+                if value:
+                    return self._pack_result(field_name, value, "property_section", 0.86, rule_id)
 
             elif rule["type"] == "customer_site_section":
                 value = self._extract_customer_site_section(word_boxes, lines, rule.get("role", "customer"))
@@ -632,6 +643,136 @@ class FieldExtractionService:
 
         return (top_y, bottom_y)
 
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Property Details section fallback (Sydney Water style)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _extract_property_details_section(
+        self,
+        word_boxes: List[Dict],
+        lines: List[str],
+        role: str,
+    ) -> Optional[str]:
+        """
+        Sydney Water-style invoices often place customer/site/address as plain
+        rows under a right-hand "Property Details" box, for example:
+
+          Property Details
+          Brisbane Tech Hub Pty Ltd
+          Data Centre
+          22 Server Lane, Brisbane QLD 4101
+          Meter ID: WTR-996046
+
+        This extractor finds that section and returns the requested row.
+        """
+        boxes = self._normalize_boxes(word_boxes)
+        if not boxes:
+            return self._extract_property_details_from_lines(lines, role)
+
+        header = self._find_phrase_on_row(boxes, ["property", "details"])
+        if not header:
+            return self._extract_property_details_from_lines(lines, role)
+
+        page_width = max(b["x2"] for b in boxes) if boxes else 1
+        col_left = max(0, header["x1"] - 20)
+        col_right = page_width + 5
+
+        below = [
+            b for b in boxes
+            if b["cy"] > header["y"] + header["h"] * 0.7
+            and col_left <= b["x1"] <= col_right
+        ]
+        below.sort(key=lambda b: (b["cy"], b["x1"]))
+
+        rows = self._group_boxes_into_rows(below)
+        useful_rows: List[str] = []
+        for row in rows:
+            text = self._clean_inline_value(" ".join(b["text"] for b in sorted(row, key=lambda x: x["x1"])))
+            if not text:
+                continue
+            lower = text.lower()
+            if any(stop in lower for stop in [
+                "water charges", "charges summary", "amount due", "subtotal", "gst", "total amount due",
+                "invoice details", "description usage rate amount"
+            ]):
+                break
+            if lower.startswith("meter"):
+                continue
+            if self._looks_like_header_noise(text):
+                continue
+            useful_rows.append(text)
+            if len(useful_rows) >= 4:
+                break
+
+        return self._classify_party_rows(useful_rows).get(role)
+
+    def _extract_property_details_from_lines(self, lines: List[str], role: str) -> Optional[str]:
+        header_idx = None
+        for i, line in enumerate(lines):
+            if "property details" in line.lower():
+                header_idx = i
+                break
+        if header_idx is None:
+            return None
+
+        useful_rows = []
+        for line in lines[header_idx + 1: header_idx + 8]:
+            text = self._clean_inline_value(line)
+            if not text:
+                continue
+            lower = text.lower()
+            if any(stop in lower for stop in ["water charges", "charges summary", "amount due", "subtotal", "gst", "total"]):
+                break
+            if lower.startswith("meter"):
+                continue
+            if self._looks_like_header_noise(text):
+                continue
+            useful_rows.append(text)
+
+        return self._classify_party_rows(useful_rows).get(role)
+
+    def _classify_party_rows(self, rows: List[str]) -> Dict[str, Optional[str]]:
+        classified = {"customer": None, "site": None, "address": None}
+        for text in rows:
+            if self._looks_like_address(text):
+                if classified["address"] is None:
+                    classified["address"] = text
+                continue
+            if classified["customer"] is None:
+                classified["customer"] = text
+            elif classified["site"] is None:
+                classified["site"] = text
+        return classified
+
+    def _find_phrase_on_row(self, boxes: List[Dict], phrase: List[str]) -> Optional[Dict]:
+        for b in boxes:
+            if b["text"].lower().strip(":") != phrase[0]:
+                continue
+            tol = max(8, b["h"] * 0.95)
+            same = sorted([x for x in boxes if abs(x["cy"] - b["cy"]) <= tol and x["x1"] >= b["x1"]], key=lambda x: x["x1"])
+            tokens = [x["text"].lower().strip(":") for x in same[:len(phrase)]]
+            if tokens == phrase:
+                return {"x1": b["x1"], "x2": same[len(phrase)-1]["x2"], "y": b["cy"], "h": b["h"]}
+        return None
+
+    def _group_boxes_into_rows(self, boxes: List[Dict]) -> List[List[Dict]]:
+        rows: List[List[Dict]] = []
+        cur: List[Dict] = []
+        cur_y: Optional[float] = None
+        for b in sorted(boxes, key=lambda x: (x["cy"], x["x1"])):
+            tol = max(8, b["h"] * 0.95)
+            if cur_y is None or abs(b["cy"] - cur_y) <= tol:
+                cur.append(b)
+                cur_y = b["cy"] if cur_y is None else (cur_y + b["cy"]) / 2
+            else:
+                rows.append(cur)
+                cur = [b]
+                cur_y = b["cy"]
+        if cur:
+            rows.append(cur)
+        return rows
+
     # ──────────────────────────────────────────────────────────────────────
     # Unlabeled Customer/Site Details section fallback
     # ──────────────────────────────────────────────────────────────────────
@@ -666,6 +807,11 @@ class FieldExtractionService:
             ["customer", "site", "information"],
             ["site", "details"],
             ["customer", "details"],
+            ["property", "details"],
+            ["account", "&", "delivery", "information"],
+            ["account", "delivery", "information"],
+            ["customer", "&", "collection", "site"],
+            ["customer", "collection", "site"],
         ]
 
         header_box = None
@@ -766,7 +912,23 @@ class FieldExtractionService:
         return classified.get(role)
 
     def _extract_customer_site_from_lines(self, lines: List[str], role: str) -> Optional[str]:
-        """Text-only fallback: find header line, take the next 3 non-empty lines."""
+        """Text-only fallback for Customer/Site/Address sections.
+
+        Handles both unlabeled rows:
+            Customer / Site Details
+            Metro Healthcare Services
+            Medical Centre
+            200 Health Street...
+
+        and label-on-separate-line rows:
+            Account & Delivery Information
+            Customer
+            Brisbane Tech Hub Pty Ltd
+            Site
+            Data Centre
+            Delivery Location
+            22 Server Lane...
+        """
         header_idx = None
         for i, line in enumerate(lines):
             lower = line.lower()
@@ -775,6 +937,10 @@ class FieldExtractionService:
                 "customer site details",
                 "customer & site information",
                 "customer site information",
+                "account & delivery information",
+                "account delivery information",
+                "customer & collection site",
+                "customer collection site",
             ]):
                 header_idx = i
                 break
@@ -782,23 +948,75 @@ class FieldExtractionService:
             return None
 
         candidates = []
-        for j in range(header_idx + 1, min(header_idx + 6, len(lines))):
+        for j in range(header_idx + 1, min(header_idx + 12, len(lines))):
             candidate = self._clean_inline_value(lines[j])
             if not candidate:
                 continue
             low = candidate.lower()
-            if any(stop in low for stop in ["electricity", "gas", "water", "charges", "subtotal", "gst", "total"]):
+            if any(stop in low for stop in [
+                "electricity usage", "gas consumption", "water charges", "fuel charges",
+                "service charges", "charges summary", "subtotal", "gst", "total amount", "amount due"
+            ]):
                 break
             candidates.append(candidate)
 
         classified = {"customer": None, "site": None, "address": None, "tariff": None}
-        for text in candidates:
+        customer_labels = {"customer", "account name", "bill to"}
+        site_labels = {"site", "premises", "location"}
+        address_labels = {"address", "supply address", "service address", "delivery location", "collection address"}
+
+        # First pass: explicit label on one line, value on next line.
+        i = 0
+        used_indexes = set()
+        while i < len(candidates):
+            lower = candidates[i].lower().strip(":")
+            next_value = candidates[i + 1] if i + 1 < len(candidates) else None
+            if next_value:
+                if lower in customer_labels and classified["customer"] is None:
+                    classified["customer"] = next_value
+                    used_indexes.update({i, i + 1})
+                    i += 2
+                    continue
+                if lower in site_labels and classified["site"] is None:
+                    classified["site"] = next_value
+                    used_indexes.update({i, i + 1})
+                    i += 2
+                    continue
+                if lower in address_labels and classified["address"] is None:
+                    classified["address"] = next_value
+                    used_indexes.update({i, i + 1})
+                    i += 2
+                    continue
+            i += 1
+
+        # Second pass: inline labels, e.g. "Customer Acme Pty Ltd".
+        for idx, text in enumerate(candidates):
+            if idx in used_indexes:
+                continue
             lower = text.lower()
+            for label in customer_labels:
+                if lower.startswith(label + " ") and classified["customer"] is None:
+                    classified["customer"] = text[len(label):].strip(" :-")
+                    used_indexes.add(idx)
+            for label in site_labels:
+                if lower.startswith(label + " ") and classified["site"] is None:
+                    classified["site"] = text[len(label):].strip(" :-")
+                    used_indexes.add(idx)
+            for label in address_labels:
+                if lower.startswith(label + " ") and classified["address"] is None:
+                    classified["address"] = text[len(label):].strip(" :-")
+                    used_indexes.add(idx)
+
+        # Third pass: unlabeled rows.
+        for idx, text in enumerate(candidates):
+            if idx in used_indexes:
+                continue
+            lower = text.lower().strip(":")
+            if lower in customer_labels or lower in site_labels or lower in address_labels:
+                continue
             if lower.startswith("tariff") or lower.startswith("plan") or lower.startswith("service type"):
-                m = re.match(r"(?:tariff(?:\s*type)?|plan(?:\s*name)?|service\s*type)\s*[:\-]?\s*(.+)$",
-                             text, flags=re.IGNORECASE)
-                if m:
-                    classified["tariff"] = m.group(1).strip()
+                continue
+            if lower.startswith("account number") or lower.startswith("collection id") or lower.startswith("meter id"):
                 continue
             if self._looks_like_address(text):
                 if classified["address"] is None:
@@ -841,43 +1059,34 @@ class FieldExtractionService:
         if not lines:
             return None
 
-        top_lines = lines[:10]
+        # Vendor is normally the first meaningful line before invoice/detail sections.
+        stop_markers = [
+            "invoice details", "invoice id", "account & delivery", "customer / site",
+            "customer & site", "customer & collection", "fleet fuel account",
+            "electricity invoice", "waste management invoice",
+        ]
         candidates = []
-
-        for idx, line in enumerate(top_lines):
+        for idx, line in enumerate(lines[:12]):
             cleaned = self._clean_inline_value(line)
+            lower = cleaned.lower()
             if not cleaned:
                 continue
-            if self._looks_like_header_noise(cleaned):
+            if any(marker in lower for marker in stop_markers):
+                break
+            if self._looks_like_header_noise(cleaned) or self._looks_like_address(cleaned):
                 continue
-            if self._looks_like_address(cleaned):
+            if lower.startswith("abn") or re.search(r"\d{2,}", cleaned):
                 continue
-
-            score = 0
-            if idx == 0:
-                score += 3
-            elif idx == 1:
-                score += 2
-
-            if re.search(
-                r"\b(pty ltd|limited|ltd|inc|llc|group|services|energy|water|gas|electric|origin|agl)\b",
-                cleaned, re.IGNORECASE,
-            ):
-                score += 4
-
-            if 3 <= len(cleaned) <= 60:
-                score += 2
-
-            if re.search(r"\d{2,}", cleaned):
-                score -= 2
-
-            candidates.append((score, cleaned))
+            candidates.append(cleaned)
 
         if not candidates:
             return None
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        best_score, best_value = candidates[0]
-        return best_value if best_score >= 2 else None
+
+        # Prefer the first line with business/provider wording, otherwise first line.
+        for c in candidates:
+            if re.search(r"\b(energy|water|gas|caltex|council|services|pty ltd|limited|ltd)\b", c, re.IGNORECASE):
+                return c
+        return candidates[0]
 
     def _extract_from_top(self, word_boxes: List[Dict], max_lines: int = 3) -> Optional[str]:
         boxes = self._normalize_boxes(word_boxes)
@@ -959,6 +1168,15 @@ class FieldExtractionService:
         return re.sub(r"\s+", " ", value).strip(" :-\t")
 
     def _get_text_lines(self, text: str, word_boxes: List[Dict] = None) -> List[str]:
+        # Prefer the OCR/PDF engine's raw text line order when available.
+        # This is important for multi-page PDFs: page 1 and page 2 word boxes often
+        # reuse the same y coordinates, so grouping boxes by (block_num, line_num)
+        # across pages can accidentally mix text from different pages.
+        raw_lines = [self._clean_inline_value(line) for line in (text or "").splitlines()
+                     if self._clean_inline_value(line)]
+        if len(raw_lines) >= 3:
+            return raw_lines
+
         if word_boxes:
             try:
                 sorted_boxes = sorted(
@@ -978,8 +1196,7 @@ class FieldExtractionService:
                     return result
             except Exception:
                 pass
-        return [self._clean_inline_value(line) for line in text.splitlines()
-                if self._clean_inline_value(line)]
+        return raw_lines
 
     # ──────────────────────────────────────────────────────────────────────
     # Normalisation
@@ -1028,11 +1245,12 @@ class FieldExtractionService:
     # ──────────────────────────────────────────────────────────────────────
 
     def extract_line_items(self, text: str, word_boxes: List[Dict] = None) -> List[Dict]:
-        if word_boxes:
-            items = self._extract_line_items_from_boxes(word_boxes)
-            if items:
-                return items
-        return self._extract_line_items_from_lines(text, word_boxes)
+        # Try both approaches and keep the richer result. Box extraction is good
+        # when rows stay aligned, but line extraction is better for PDFs where
+        # PyMuPDF outputs each table cell on its own line.
+        box_items = self._extract_line_items_from_boxes(word_boxes) if word_boxes else []
+        line_items = self._extract_line_items_from_lines(text, word_boxes)
+        return line_items if len(line_items) >= len(box_items) else box_items
 
     def _extract_line_items_from_boxes(self, word_boxes: List[Dict]) -> List[Dict]:
         boxes = self._normalize_boxes(word_boxes)
@@ -1112,12 +1330,13 @@ class FieldExtractionService:
             if any(x in lower for x in [
                 "gas consumption charges", "electricity usage summary",
                 "electricity usage charges", "water consumption charges",
-                "water charges", "charges summary",
+                "water charges", "charges summary", "fuel charges summary",
+                "service charges summary", "usage and charges",
             ]):
                 section_start = i
                 break
 
-        search_lines = lines if section_start is None else lines[section_start:]
+        search_lines = lines if section_start is None else lines[section_start + 1:]
 
         if section_start is not None:
             for i, line in enumerate(search_lines):
@@ -1128,23 +1347,122 @@ class FieldExtractionService:
             if section_end is not None:
                 search_lines = search_lines[:section_end]
 
+        # 1) First try normal full-row parsing. This works when OCR returns:
+        #    Diesel 161 L $1.9/L $305.90
         for line in search_lines:
             clean = self._clean_inline_value(line)
             lower = clean.lower()
-
-            if any(token in lower for token in [
-                "description", "invoice", "billing period",
-                "customer", "address", "meter id", "abn",
-            ]):
+            if not clean or self._is_table_header_line(lower):
                 continue
-            if lower.startswith("subtotal") or lower.startswith("gst") or lower.startswith("total amount"):
+            if lower.startswith("gst") or lower.startswith("total amount") or lower.startswith("subtotal"):
                 continue
-
             parsed_row = self._parse_line_item_row(clean, len(line_items) + 1, method="line_regex")
             if parsed_row:
                 line_items.append(parsed_row)
 
+        # 2) Then handle PDF text extraction where table cells are split over lines:
+        #    Diesel / 161 L / $1.9/L / $305.90
+        split_items = self._extract_split_table_items(search_lines)
+        if len(split_items) > len(line_items):
+            return split_items
+
         return line_items
+
+    def _is_table_header_line(self, lower: str) -> bool:
+        header_tokens = {
+            "description", "usage", "volume", "quantity", "service",
+            "rate", "amount", "description usage rate amount",
+            "description volume rate amount", "service quantity rate amount",
+        }
+        return lower.strip() in header_tokens
+
+    def _looks_like_money(self, value: str) -> bool:
+        return bool(re.fullmatch(r"\$?\d[\d,]*(?:\.\d{1,4})?(?:/[A-Za-z]{1,8})?", value.strip()))
+
+    def _looks_like_amount(self, value: str) -> bool:
+        return bool(re.fullmatch(r"\$?\d[\d,]*(?:\.\d{2})", value.strip()))
+
+    def _looks_like_quantity_or_dash(self, value: str) -> bool:
+        v = value.strip()
+        if v in {"-", "–", "—"}:
+            return True
+        return bool(re.fullmatch(r"\d[\d,]*(?:\.\d+)?\s*[A-Za-z]{1,12}", v))
+
+    def _looks_like_rate_or_dash(self, value: str) -> bool:
+        v = value.strip()
+        if v in {"-", "–", "—"}:
+            return True
+        return self._looks_like_money(v)
+
+    def _extract_split_table_items(self, lines: List[str]) -> List[Dict]:
+        body = []
+        for line in lines:
+            clean = self._clean_inline_value(line)
+            lower = clean.lower()
+            if not clean or self._is_table_header_line(lower):
+                continue
+            if lower.startswith("subtotal") or lower.startswith("gst") or lower.startswith("total amount") or lower.startswith("amount due"):
+                break
+            body.append(clean)
+
+        items: List[Dict] = []
+        i = 0
+        while i < len(body):
+            desc = body[i]
+            lower_desc = desc.lower()
+            if self._looks_like_quantity_or_dash(desc) or self._looks_like_rate_or_dash(desc) or self._looks_like_amount(desc):
+                i += 1
+                continue
+
+            # Standard four-cell row: description, quantity, rate, amount
+            if i + 3 < len(body):
+                q, r, a = body[i + 1], body[i + 2], body[i + 3]
+                if self._looks_like_quantity_or_dash(q) and self._looks_like_rate_or_dash(r) and self._looks_like_amount(a):
+                    items.append({
+                        "line_number": len(items) + 1,
+                        "description": desc,
+                        "quantity": q,
+                        "unit_price": r,
+                        "total_price": a,
+                        "extraction_method": "split_line_table",
+                        "confidence_score": 0.92,
+                    })
+                    i += 4
+                    continue
+
+            # OCR sometimes drops only the dash rate cell: description, quantity, amount
+            if i + 2 < len(body):
+                q, a = body[i + 1], body[i + 2]
+                if self._looks_like_quantity_or_dash(q) and self._looks_like_amount(a):
+                    items.append({
+                        "line_number": len(items) + 1,
+                        "description": desc,
+                        "quantity": q,
+                        "unit_price": "-",
+                        "total_price": a,
+                        "extraction_method": "split_line_table_missing_rate",
+                        "confidence_score": 0.86,
+                    })
+                    i += 3
+                    continue
+
+            # Some OCR engines drop both dash cells: description, amount
+            if i + 1 < len(body) and self._looks_like_amount(body[i + 1]):
+                items.append({
+                    "line_number": len(items) + 1,
+                    "description": desc,
+                    "quantity": "-",
+                    "unit_price": "-",
+                    "total_price": body[i + 1],
+                    "extraction_method": "split_line_table_amount_only",
+                    "confidence_score": 0.82,
+                })
+                i += 2
+                continue
+
+            i += 1
+
+        return items
 
     def _parse_line_item_row(self, row_text: str, line_number: int, method: str) -> Optional[Dict]:
         """Try known row shapes in priority order.  Returns a line-item dict
@@ -1161,6 +1479,21 @@ class FieldExtractionService:
                 "quantity": q.strip(), "unit_price": r.strip(),
                 "total_price": a.strip(),
                 "extraction_method": method, "confidence_score": 0.93,
+            }
+
+        # General Waste Bins 6 bins $91.84 $551.04 / Diesel 161 L $1.90 $305.90
+        # This handles invoices where the rate is shown as a flat unit price instead of $/unit.
+        m1b = re.match(
+            r"^(.*?)\s+(\d[\d,]*\s*[A-Za-z]{1,12})\s+(\$?[\d,]+(?:\.\d{1,4})?)\s+(\$?[\d,]+(?:\.\d{2})?)$",
+            row_text, flags=re.IGNORECASE,
+        )
+        if m1b:
+            d, q, r, a = m1b.groups()
+            return {
+                "line_number": line_number, "description": d.strip(),
+                "quantity": q.strip(), "unit_price": r.strip(),
+                "total_price": a.strip(),
+                "extraction_method": method, "confidence_score": 0.90,
             }
 
         # Total Usage 3,909 kWh - $824.80   (single dash)

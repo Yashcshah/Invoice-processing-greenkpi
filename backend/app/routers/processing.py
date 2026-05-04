@@ -111,7 +111,19 @@ async def run_processing_pipeline(
             local_path = tmp.name
         
         processed_path = local_path
-        
+
+        # IMPORTANT: clear old processing rows before inserting new ones.
+        # Without this, the frontend can keep showing the old empty OCR / fields / line_items
+        # after you re-process a scanned PDF.
+        try:
+            if not skip_ocr:
+                supabase.table('ocr_results').delete().eq('invoice_id', invoice_id).execute()
+            if not skip_extraction:
+                supabase.table('extracted_fields').delete().eq('invoice_id', invoice_id).execute()
+                supabase.table('line_items').delete().eq('invoice_id', invoice_id).execute()
+        except Exception as cleanup_exc:
+            print(f"[Pipeline] Warning: could not clear old extraction rows: {cleanup_exc}")
+
         # Step 1: Preprocessing
         # PDFs are converted to images page-by-page inside extract_from_pdf(),
         # so we skip the image-only preprocessing step for PDF inputs.
@@ -149,22 +161,49 @@ async def run_processing_pipeline(
             
             ocr_service = get_ocr_service()
             
-            if file_path.lower().endswith('.pdf'):
-                # Handle PDF
+            is_pdf_file = file_path.lower().endswith('.pdf') or processed_path.lower().endswith('.pdf')
+
+            if is_pdf_file:
+                # Handles both text-based PDFs and scanned/image-only PDFs.
+                # Scanned fallback is inside OCRService.extract_from_pdf().
                 ocr_results = ocr_service.extract_from_pdf(processed_path)
-                # Combine results from all pages
+
+                if not ocr_results:
+                    raise ValueError('No OCR results returned from PDF')
+
+                raw_text_parts = [(r.get('raw_text') or '') for r in ocr_results]
+                confidence_scores = [float(r.get('confidence_score') or 0) for r in ocr_results]
+
                 ocr_result = {
-                    'raw_text': '\n\n'.join([r['raw_text'] for r in ocr_results]),
-                    'confidence_score': sum([r['confidence_score'] for r in ocr_results]) / len(ocr_results),
+                    'raw_text': '\n\n'.join(raw_text_parts),
+                    'confidence_score': sum(confidence_scores) / max(len(confidence_scores), 1),
                     'word_boxes': [],
-                    'ocr_engine': ocr_results[0]['ocr_engine'],
-                    'engine_version': ocr_results[0]['engine_version'],
-                    'processing_time_ms': sum([r['processing_time_ms'] for r in ocr_results]),
+                    'ocr_engine': ocr_results[0].get('ocr_engine', 'pdf_ocr'),
+                    'engine_version': ocr_results[0].get('engine_version'),
+                    'processing_time_ms': sum([int(r.get('processing_time_ms') or 0) for r in ocr_results]),
                 }
+
                 for r in ocr_results:
-                    ocr_result['word_boxes'].extend(r.get('word_boxes', []))
+                    ocr_result['word_boxes'].extend(r.get('word_boxes') or [])
+
+                print(
+                    f"[OCR] PDF processed. pages={len(ocr_results)}, "
+                    f"text_chars={len(ocr_result['raw_text'])}, "
+                    f"word_boxes={len(ocr_result['word_boxes'])}, "
+                    f"engine={ocr_result['ocr_engine']}"
+                )
             else:
                 ocr_result = ocr_service.extract_text(processed_path)
+                print(
+                    f"[OCR] Image processed. text_chars={len(ocr_result.get('raw_text') or '')}, "
+                    f"word_boxes={len(ocr_result.get('word_boxes') or [])}, "
+                    f"engine={ocr_result.get('ocr_engine')}"
+                )
+
+            if not (ocr_result.get('raw_text') or '').strip():
+                raise ValueError(
+                    'OCR returned empty text. For scanned PDFs, check Tesseract installation and OCRService.extract_from_pdf scanned fallback.'
+                )
             
             # Save OCR results
             supabase.table('ocr_results').insert({

@@ -194,20 +194,127 @@ const formatRate = (rate, quantity) => {
 }
 
 const getPreviewStyle = () => ({
+  // One universal invoice design for water, gas, electricity, fuel, waste, and other bills.
+  // Do not hardcode supplier-specific layouts here. The data changes, but the design stays the same.
   subtitle: 'Billing Statement',
-  infoTitle: 'Customer & Site Information',
+  infoTitle: 'Account / Site Details',
   chargesTitle: 'Charges Summary',
-  customerLabel: 'Customer',
-  siteLabel: 'Site',
-  addressLabel: 'Address',
-  meterLabel: 'Meter ID',
+  customerLabel: 'Customer / Account Holder',
+  siteLabel: 'Site / Service Type',
+  addressLabel: 'Service / Delivery Address',
+  meterLabel: 'Reference / Meter ID',
   accent: '#0f766e',
   sectionBg: '#ecfeff',
   tableHeaderBg: '#0f766e',
   summaryBg: '#f8fafc',
-  accountTitle: 'ACCOUNT',
-  totalLabel: 'TOTAL',
+  accountTitle: 'SERVICE ACCOUNT',
+  totalLabel: 'TOTAL AMOUNT DUE',
 })
+
+
+const getAllOcrText = (ocrResults = []) =>
+  (ocrResults || [])
+    .map((r) => r?.raw_text || r?.text || '')
+    .filter(Boolean)
+    .join('\n')
+
+const isAmountText = (value = '') => /^\$?\d[\d,]*(?:\.\d{2})$/.test(String(value).trim())
+const isQuantityText = (value = '') => {
+  const v = String(value).trim()
+  return v === '-' || /^\d[\d,]*(?:\.\d+)?\s*[A-Za-z]{1,12}$/.test(v)
+}
+const isRateText = (value = '') => {
+  const v = String(value).trim()
+  return v === '-' || /^\$?\d[\d,]*(?:\.\d{1,4})?(?:\/[A-Za-z]{1,12})?$/.test(v)
+}
+
+const parseFallbackLineItemsFromOcr = (ocrResults = []) => {
+  const raw = getAllOcrText(ocrResults)
+  if (!raw) return []
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+
+  const startIndex = lines.findIndex((line) =>
+    /(charges\s+summary|usage\s+summary|consumption\s+charges|usage\s+and\s+charges|fuel\s+charges|service\s+charges)/i.test(line)
+  )
+
+  const working = startIndex >= 0 ? lines.slice(startIndex + 1) : lines
+  const body = []
+
+  for (const line of working) {
+    const lower = line.toLowerCase()
+    if (/^(subtotal|gst|total\s+amount\s+due|total\s+charges|amount\s+due|your\s+total\s+charges)\b/i.test(line)) break
+    if (/^(description|usage|volume|quantity|service|rate|amount)$/i.test(line)) continue
+    if (/^(description\s+(usage|volume|quantity)\s+rate\s+amount|service\s+quantity\s+rate\s+amount)$/i.test(line)) continue
+    body.push(line)
+  }
+
+  const items = []
+  let i = 0
+
+  const pushItem = (description, quantity, unit_price, total_price, confidence = 0.78) => {
+    const cleanDesc = cleanText(description)
+    if (!cleanDesc || isQuantityText(cleanDesc) || isRateText(cleanDesc) || isAmountText(cleanDesc)) return
+    items.push({
+      id: `ocr-fallback-${items.length + 1}`,
+      line_number: items.length + 1,
+      description: cleanDesc,
+      quantity: quantity || '-',
+      unit_price: unit_price || '-',
+      total_price: total_price || '-',
+      extraction_method: 'frontend_ocr_fallback',
+      confidence_score: confidence,
+    })
+  }
+
+  while (i < body.length) {
+    const current = body[i]
+
+    const fullRow = current.match(/^(.*?)\s+(\d[\d,]*(?:\.\d+)?\s*[A-Za-z]{1,12})\s+(\$?[\d,]+(?:\.\d{1,4})?(?:\/[A-Za-z]{1,12})?|[-–—])\s+(\$?[\d,]+(?:\.\d{2}))$/i)
+    if (fullRow) {
+      pushItem(fullRow[1], fullRow[2], fullRow[3], fullRow[4], 0.86)
+      i += 1
+      continue
+    }
+
+    const feeRow = current.match(/^(.*?)\s+[-–—]\s+[-–—]\s+(\$?[\d,]+(?:\.\d{2}))$/i)
+    if (feeRow) {
+      pushItem(feeRow[1], '-', '-', feeRow[2], 0.84)
+      i += 1
+      continue
+    }
+
+    if (isQuantityText(current) || isRateText(current) || isAmountText(current)) {
+      i += 1
+      continue
+    }
+
+    if (i + 3 < body.length && isQuantityText(body[i + 1]) && isRateText(body[i + 2]) && isAmountText(body[i + 3])) {
+      pushItem(current, body[i + 1], body[i + 2], body[i + 3], 0.86)
+      i += 4
+      continue
+    }
+
+    if (i + 2 < body.length && isQuantityText(body[i + 1]) && isAmountText(body[i + 2])) {
+      pushItem(current, body[i + 1], '-', body[i + 2], 0.78)
+      i += 3
+      continue
+    }
+
+    if (i + 1 < body.length && isAmountText(body[i + 1])) {
+      pushItem(current, '-', '-', body[i + 1], 0.72)
+      i += 2
+      continue
+    }
+
+    i += 1
+  }
+
+  return items
+}
 
 const synthesiseLineItems = (fields) => {
   const rows = []
@@ -256,6 +363,7 @@ const reconcileTotal = (subtotalRaw, gstRaw, totalRaw) => {
 function InvoicePreviewCard({
   extractedFields,
   lineItems,
+  ocrResults,
   invoice,
   previewRef,
   onEditField,
@@ -305,6 +413,8 @@ function InvoicePreviewCard({
   const supplyAddress =
     safeField(extractedFields, 'supply_address', '') ||
     safeField(extractedFields, 'property_address', '') ||
+    safeField(extractedFields, 'delivery_location', '') ||
+    safeField(extractedFields, 'collection_address', '') ||
     '-'
 
   const tariffType =
@@ -314,7 +424,11 @@ function InvoicePreviewCard({
     billingPeriodTail ||
     '-'
 
-  const meterId = safeShortField(extractedFields, 'meter_id', '-', 40) || '-'
+  const meterId =
+    safeShortField(extractedFields, 'meter_id', '', 40) ||
+    safeShortField(extractedFields, 'account_number', '', 40) ||
+    safeShortField(extractedFields, 'collection_id', '', 40) ||
+    '-'
 
   const subtotalRaw = safeShortField(extractedFields, 'subtotal', '', 20)
   const gstRaw =
@@ -350,6 +464,14 @@ function InvoicePreviewCard({
     }))
 
   let lineItemsAreSynthesised = false
+  if (cleanedLineItems.length === 0) {
+    const fallbackFromOcr = parseFallbackLineItemsFromOcr(ocrResults)
+    if (fallbackFromOcr.length > 0) {
+      cleanedLineItems = fallbackFromOcr
+      lineItemsAreSynthesised = true
+    }
+  }
+
   if (cleanedLineItems.length === 0) {
     const synthesised = synthesiseLineItems(extractedFields)
     if (synthesised.length > 0) {
@@ -428,7 +550,7 @@ function InvoicePreviewCard({
           </div>
 
           <div className="mb-6 overflow-x-auto border border-slate-400 bg-white">
-            <table className="w--full min-w-[760px] border-collapse text-[15px]">
+            <table className="w-full min-w-[760px] border-collapse text-[15px]">
               <tbody>
                 <tr>
                   <td className="w-[20%] border border-slate-300 px-3 py-2 font-medium">Invoice ID</td>
@@ -529,7 +651,7 @@ function InvoicePreviewCard({
                       {ui.meterLabel}
                     </td>
                     <td className="border border-slate-300 px-3 py-2">
-                      <EditableValue fieldNames="meter_id" displayValue={textOrDash(meterId)} />
+                      <EditableValue fieldNames={['meter_id', 'account_number', 'collection_id']} displayValue={textOrDash(meterId)} />
                     </td>
                   </tr>
                 </tbody>
@@ -556,7 +678,7 @@ function InvoicePreviewCard({
                 <thead>
                   <tr style={{ backgroundColor: ui.tableHeaderBg }} className="text-white">
                     <th className="border border-slate-400 px-3 py-2 text-left">Description</th>
-                    <th className="border border-slate-400 px-3 py-2 text-left">Usage</th>
+                    <th className="border border-slate-400 px-3 py-2 text-left">Quantity / Usage</th>
                     <th className="border border-slate-400 px-3 py-2 text-left">Rate</th>
                     <th className="border border-slate-400 px-3 py-2 text-right">Amount</th>
                   </tr>
@@ -1646,6 +1768,7 @@ export default function InvoiceDetail() {
               <InvoicePreviewCard
                 extractedFields={extractedFields}
                 lineItems={lineItems}
+                ocrResults={ocrResults}
                 invoice={invoice}
                 previewRef={previewRef}
                 onEditField={startEditField}
