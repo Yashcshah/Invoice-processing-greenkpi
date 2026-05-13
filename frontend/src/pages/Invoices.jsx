@@ -107,6 +107,19 @@ export default function Invoices() {
     fetchInvoices()
   }, [selectedFolderId])
 
+  // Realtime: refresh list whenever any invoice row is inserted or updated
+  useEffect(() => {
+    const channel = supabase
+      .channel('invoices-list-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'invoices' },
+        () => { fetchInvoices() }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [selectedFolderId])
+
   useEffect(() => {
     if (quickFilter === 'gst_issues' && gstIssueIds === null) {
       fetchGstIssueIds()

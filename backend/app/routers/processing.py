@@ -257,10 +257,28 @@ async def run_processing_pipeline(
                 ocr_result.get('word_boxes', [])
             )
             
+            def _safe_float(val):
+                """Strip units/text from a value and return float or None."""
+                if val is None:
+                    return None
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    import re as _re
+                    # Extract first numeric sequence (handles "40 kL", "$12.50", "1,234.56")
+                    m = _re.search(r'[\d,]+\.?\d*', str(val).replace(',', ''))
+                    return float(m.group().replace(',', '')) if m else None
+
             for item in line_items:
                 supabase.table('line_items').insert({
                     'invoice_id': invoice_id,
-                    **item,
+                    'line_number':    item.get('line_number'),
+                    'description':    item.get('description'),
+                    'quantity':       _safe_float(item.get('quantity')),
+                    'unit_price':     _safe_float(item.get('unit_price')),
+                    'total_price':    _safe_float(item.get('total_price')),
+                    'tax_amount':     _safe_float(item.get('tax_amount')),
+                    'confidence_score': _safe_float(item.get('confidence_score')),
                 }).execute()
             
             # Denormalize vendor_name + match against user folders to suggest one
