@@ -270,16 +270,24 @@ async def run_processing_pipeline(
                     return float(m.group().replace(',', '')) if m else None
 
             for item in line_items:
-                supabase.table('line_items').insert({
-                    'invoice_id': invoice_id,
-                    'line_number':    item.get('line_number'),
-                    'description':    item.get('description'),
-                    'quantity':       _safe_float(item.get('quantity')),
-                    'unit_price':     _safe_float(item.get('unit_price')),
-                    'total_price':    _safe_float(item.get('total_price')),
-                    'tax_amount':     _safe_float(item.get('tax_amount')),
-                    'confidence_score': _safe_float(item.get('confidence_score')),
-                }).execute()
+                try:
+                    row = {
+                        'invoice_id':     invoice_id,
+                        'line_number':    item.get('line_number'),
+                        'description':    item.get('description'),
+                        'quantity':       _safe_float(item.get('quantity')),
+                        'unit_price':     _safe_float(item.get('unit_price')),
+                        'total_price':    _safe_float(item.get('total_price')),
+                        'confidence_score': _safe_float(item.get('confidence_score')),
+                    }
+                    # tax_amount column may not exist in older schema — add only if present
+                    tax_val = _safe_float(item.get('tax_amount'))
+                    if tax_val is not None:
+                        row['tax_amount'] = tax_val
+                    supabase.table('line_items').insert(row).execute()
+                except Exception as li_exc:
+                    # Never let a single bad line item crash the whole pipeline
+                    print(f"[Pipeline] Warning: could not insert line item: {li_exc}")
             
             # Denormalize vendor_name + match against user folders to suggest one
             vendor_name = (
