@@ -1,6 +1,6 @@
 # InvoiceAI — Automated Invoice Processing System
 
-AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding, Graph Neural Network reasoning with node-level field prediction, ML cluster agents, automatic ABN + GST validation via the Australian Business Register, sustainability tagging, Australian compliance checks, and folder organisation.
+AI-powered invoice processing with OCR, TrOCR fallback, rule-based document-type classification, mode-aware multimodal LLM encoding (Gemini 2.5 Flash), Graph Neural Network reasoning with node-level field prediction, ML vendor cluster agents, automatic ABN + GST validation via the Australian Business Register, sustainability tagging, Australian compliance checks, and folder organisation.
 
 ---
 
@@ -11,7 +11,8 @@ AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding,
 | Frontend | React 18 + Vite · Tailwind CSS · React Router · Recharts · Lucide React · Supabase Realtime |
 | Backend | Python 3.11–3.13 · FastAPI · Uvicorn |
 | OCR | Tesseract · PyMuPDF (PDFs) · OpenCV (preprocessing) · TrOCR fallback (HF API) |
-| LLM | Gemini 2.5 Flash (multimodal — image + OCR text) · few-shot correction injection |
+| Doc-type Classifier | Rule-based pre-classifier (OCR confidence + keywords + page count) |
+| LLM | Gemini 2.5 Flash (multimodal) · 4 mode-aware prompt templates · few-shot correction injection |
 | Graph / GNN | scikit-learn (graph features) · PyTorch + torch-geometric (GAT + NODE_PRED head, optional) |
 | ML Clustering | TF-IDF + KMeans (vendor cluster agents) |
 | ABN Validation | Australian Business Register (ABR) JSON API · local mod-89 checksum |
@@ -23,21 +24,23 @@ AI-powered invoice processing with OCR, TrOCR fallback, multimodal LLM encoding,
 
 - **Upload invoices** — drag & drop PDF, PNG, JPG, TIFF (up to 10 MB)
 - **OCR pipeline** — Tesseract for images, PyMuPDF direct extraction for PDFs; auto-falls back to TrOCR when Tesseract confidence < 60%
-- **Multimodal LLM** — Gemini 2.5 Flash analyses image + OCR text → structured JSON fields + sustainability tags
+- **Document-type classifier** — rule-based pre-classifier runs immediately after OCR and assigns each invoice one of five labels that control how much the pipeline relies on Gemini vs regex/GNN
+- **Mode-aware multimodal LLM** — Gemini 2.5 Flash uses a different prompt template per doc type: standard refinement, primary (trust image over OCR), fuel-specific fields, or cross-page reconciliation
 - **LLM adaptation** — user corrections accumulate in DB and are injected as few-shot examples into every future Gemini prompt (TRAIN_LLM feedback arc)
 - **Graph construction** — invoice OCR boxes become a document graph; LLM field assignments guide node semantic typing (LLM_EMB → FEAT bridge)
-- **GNN reasoning** — 2-layer GAT with a NODE_PRED classification head (9 field types); runs in lite mode without PyTorch
+- **GNN reasoning** — 2-layer GAT with a NODE_PRED classification head (9 field types); runs in lite mode without PyTorch; skipped automatically for handwritten invoices
 - **Node-level field prediction** — GAT classifies every graph node into a field type and extracts or reinforces field values from the highest-confidence nodes
 - **ML cluster agents** — TF-IDF + KMeans groups invoices by vendor/format; each cluster learns from user corrections
 - **Self-improving accuracy** — every correction trains the agent and fine-tunes the GAT; next invoice from the same vendor is extracted better automatically
-- **Automatic ABN + GST validation** — every invoice processed automatically checks ABN format, mod-89 checksum, and optionally calls the ABR API to confirm active registration and GST status
+- **Automatic ABN + GST validation** — every invoice automatically checks ABN format, mod-89 checksum, and optionally calls the ABR API to confirm active registration and GST status
 - **Supabase Realtime** — invoice status updates pushed to the UI via WebSocket; polling fallback if Realtime is unavailable
 - **Green KPI** — sustainability tag extraction, GST reconciliation, ABN compliance, QBCC and retention checks, spend tracking
 - **Folder organisation** — create folders (e.g. "AGL", "Utilities") and the AI suggests the right folder per invoice
 - **Inline field editing** — correct any extracted value directly in the UI; corrections feed the learning loop
-- **Confidence scores** — horizontal bar chart per field (Recharts); GNN/LLM/agent-corrected fields show boosted confidence
+- **Confidence scores** — horizontal bar chart per field; GNN/LLM/agent-corrected fields show boosted confidence
+- **Doc-type pills** — Invoice Detail shows a colour-coded pill next to the status badge; Invoices list has filter chips by document type
 - **Dashboard** — animated stats, ML Agents panel, Green KPI panel (spend, tags, compliance, confidence trend chart)
-- **List + Grid views** — Invoices page has filter chips (All / Needs Review / GST Issues) and a List/Grid segmented control
+- **List + Grid views** — Invoices page has filter chips (All / Needs Review / GST Issues / doc type) and a List/Grid segmented control
 
 ---
 
@@ -56,32 +59,48 @@ Preprocessing  (grayscale · deskew · denoise · binarize)
 OCR  (Tesseract / PyMuPDF)
       │  └─ confidence < 60%? → TrOCR fallback (HF API)
       ▼
+Step 2.5: Document-Type Classifier  ← NEW
+      │  Rule-based: page count · OCR confidence · fuel keywords · noise patterns
+      │  Labels: standard_structured | multi_page | fuel_statement
+      │          low_quality_scanned | handwritten_or_very_noisy
+      │  → stores doc_type_label on invoice
+      │  → selects LLM mode: llm_augment | llm_multipage | llm_fuel | llm_primary
+      ▼
 ML Cluster Agent  (TF-IDF + KMeans → assign vendor cluster → apply learned corrections)
       │
       ▼
 Regex Extraction  (invoice # · date · total · vendor · line items)
       │
       ▼
-Multimodal LLM  (Gemini 2.5 Flash — image + OCR + correction shots → structured JSON + sustainability tags)
+Multimodal LLM  (Gemini 2.5 Flash — mode-aware prompt)
+      │  llm_augment   → refines regex/GNN output (standard)
+      │  llm_primary   → Gemini is primary source; image trusted over OCR (low-quality/handwritten)
+      │  llm_fuel      → standard fields + fuel_details (litres, rate, rego, odometer…)
+      │  llm_multipage → cross-page total reconciliation; OCR limit 10k chars
+      │
+      │  Field merge logic:
+      │    llm_primary  → Gemini always wins (overrides regex/GNN)
+      │    llm_augment  → Gemini wins only when confidence is higher
       │
       ├─ LLM field values → node semantic types (LLM_EMB → FEAT bridge)
       ▼
 Graph Construction  (OCR boxes → nodes; LLM field matches guide semantic type one-hots; 4 edge types)
-      │
+      │  [SKIPPED for handwritten_or_very_noisy — word-boxes unreliable]
       ▼
 GNN Reasoning  (GAT 2-layer → NODE_PRED classification head → per-node field type prediction)
+      │  [SKIPPED for handwritten_or_very_noisy — graph features unreliable]
       │  └─ node predictions → extract missing fields + reinforce existing values
       ▼
 Consistency Layer  (GST reconciliation · date normalisation · QBCC · retention · tag catalogue)
       │
       ▼
-ABN + GST Validation  ← NEW
+ABN + GST Validation
       │  • ABN format check (11 digits)
       │  • ABN mod-89 checksum
       │  • GST math check (tax ≈ subtotal × 10 %)
       │  └─ ABR API lookup if ABR_GUID set → confirms Active + GST-registered
       ▼
-Store → invoices + extracted_fields + line_items (core tables)
+Store → invoices (+ doc_type_label) + extracted_fields + line_items (core tables)
       │   → green_kpi.invoices + invoice_data + processing_logs (analytics layer)
       │   └─ compliance_flags includes ABN + GST results
       │
@@ -95,6 +114,51 @@ User corrects fields in InvoiceDetail  (Supabase Realtime status updates)
 
 ---
 
+## Document-Type Classifier
+
+The classifier (`doc_type_classifier.py`) runs as **Step 2.5** — immediately after OCR, before the ML cluster agent. It assigns every invoice one of five labels using deterministic rules, with no ML model required.
+
+### The five labels
+
+| Label | Condition | LLM mode | GNN |
+|-------|-----------|----------|-----|
+| `standard_structured` | Default — clean single-page | `llm_augment` | high priority |
+| `multi_page` | `page_count > 1` | `llm_multipage` | medium priority |
+| `fuel_statement` | Fuel keywords in OCR text | `llm_fuel` | medium priority |
+| `low_quality_scanned` | OCR confidence < 60% or TrOCR used | `llm_primary` | low priority |
+| `handwritten_or_very_noisy` | Confidence < 40% + sparse + garble patterns | `llm_primary` | **skipped** |
+
+Priority order: handwritten → low_quality → fuel → multi_page → standard.
+
+### Fuel keywords detected
+`fuel · diesel · petrol · unleaded · litres · l/100km · bowser · lpg · pump price · refuel · fuel card · fleet fuel · bulk fuel · avgas · biodiesel`
+
+### Fuel-specific fields extracted (llm_fuel mode)
+When an invoice is classified as `fuel_statement`, Gemini is prompted to extract a `fuel_details` object in addition to standard fields:
+
+| Field | Description |
+|-------|-------------|
+| `fuel_litres` | Volume in litres |
+| `fuel_rate_per_litre` | Price per litre |
+| `fuel_fuel_type` | diesel / petrol / unleaded / lpg / avgas / biodiesel |
+| `fuel_vehicle_rego` | Vehicle registration number |
+| `fuel_odometer_km` | Odometer reading at fill |
+| `fuel_pump_number` | Pump / bowser number |
+| `fuel_card_number` | Fuel card number |
+
+These are stored as individual extracted fields (prefixed `fuel_`) so future cluster agents can learn corrections specific to fuel statements.
+
+### DB column
+```sql
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS doc_type_label TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_invoices_doc_type_label
+  ON public.invoices (doc_type_label);
+```
+
+---
+
 ## Architecture Diagrams
 
 ### Multimodal LLM + Graph/GNN layer
@@ -103,9 +167,13 @@ User corrects fields in InvoiceDetail  (Supabase Realtime status updates)
 OCR Output ──────────────────────────────────────────────► Graph Builder
 (word_boxes + raw_text)                                         │
                                                                 │
-Invoice Image ──► Gemini 2.5 Flash ──► Structured JSON         │
-OCR Text ───────►  (vision + text)  ──► LLM Field Values ──► Node Semantic Types
+Doc-Type Classifier ──► llm_mode selection                     │
+                              │                                 │
+Invoice Image ──► Gemini 2.5 Flash (mode-aware prompt)         │
+OCR Text ───────►  (vision + text)  ──► Structured JSON        │
+                                     ──► LLM Field Values ──► Node Semantic Types
                                      ──► Layout Segments ──► (LLM_EMB → FEAT bridge)
+                                     ──► fuel_details (fuel mode only)
                                                                 │
                                                           Node Features (20-dim)
                                                           [bbox · TF-IDF · sem-type]
@@ -114,6 +182,7 @@ OCR Text ───────►  (vision + text)  ──► LLM Field Values �
                                                     · hierarchical · logical)
                                                                 │
                                                         GAT 2-layer
+                                                        [skipped: handwritten]
                                                                 │
                                                     NODE_PRED head (9 field types)
                                                     VENDOR_NAME · TOTAL · LINE_QTY
@@ -166,8 +235,8 @@ invoice-processing/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.jsx        # Stats · ML Agents · Green KPI · Recent invoices
 │   │   │   ├── Upload.jsx           # Drag-and-drop upload
-│   │   │   ├── Invoices.jsx         # List/Grid view · filter chips · folder sidebar
-│   │   │   └── InvoiceDetail.jsx    # Fields · OCR collapsible · Green KPI strip · Realtime
+│   │   │   ├── Invoices.jsx         # List/Grid · status + doc-type filter chips · folder sidebar
+│   │   │   └── InvoiceDetail.jsx    # Fields · DocTypePill · Green KPI strip · Realtime
 │   │   ├── components/
 │   │   │   ├── Layout.jsx           # Sidebar + top bar
 │   │   │   ├── charts/
@@ -176,7 +245,7 @@ invoice-processing/
 │   │   │   │   ├── KpiDoughnutChart.jsx
 │   │   │   │   └── ClusterAccuracyChart.jsx
 │   │   │   └── ui/
-│   │   │       ├── StatusPill.jsx   # Colour-coded status badge (handles extraction_complete)
+│   │   │       ├── StatusPill.jsx   # Colour-coded status badge
 │   │   │       ├── ConfidenceBar.jsx
 │   │   │       └── KpiChip.jsx
 │   │   └── lib/
@@ -190,24 +259,25 @@ invoice-processing/
 │   │   ├── config.py                # Settings from .env (incl. ABR_GUID, GEMINI_API_KEY)
 │   │   ├── routers/
 │   │   │   ├── invoices.py          # Invoice CRUD + folder assign
-│   │   │   ├── processing.py        # Full pipeline + reset-stuck endpoint
+│   │   │   ├── processing.py        # Full pipeline: OCR → DocType → LLM(mode) → GNN → Store
 │   │   │   ├── extraction.py        # Field validation + green_kpi.corrections write
 │   │   │   ├── folders.py           # Folder CRUD
 │   │   │   ├── learning.py          # ML cluster agent + GAT retrain endpoints
 │   │   │   └── green_kpi.py         # Green KPI endpoints
 │   │   └── services/
-│   │       ├── ocr_service.py       # Tesseract + PyMuPDF + TrOCR fallback
+│   │       ├── doc_type_classifier.py  # Rule-based doc-type classifier (5 labels) ← NEW
+│   │       ├── ocr_service.py          # Tesseract + PyMuPDF + TrOCR fallback
 │   │       ├── preprocessing_service.py
 │   │       ├── extraction_service.py
-│   │       ├── clustering_service.py  # TF-IDF + KMeans
-│   │       ├── learning_service.py    # Correction learning + retraining
-│   │       ├── agent_manager.py       # Cluster routing + correction application
-│   │       ├── llm_service.py         # Gemini 2.5 Flash + few-shot correction injection
-│   │       ├── graph_builder.py       # Document graph + LLM_EMB→FEAT node typing
-│   │       ├── gnn_service.py         # 2-layer GAT + NODE_PRED head + fine-tune
-│   │       ├── validation_service.py  # GST · QBCC · sustainability tags
-│   │       ├── abn_service.py         # ABN checksum + ABR API lookup (NEW)
-│   │       ├── green_kpi_service.py   # green_kpi.* DB writes + stats
+│   │       ├── clustering_service.py   # TF-IDF + KMeans
+│   │       ├── learning_service.py     # Correction learning + retraining
+│   │       ├── agent_manager.py        # Cluster routing + correction application
+│   │       ├── llm_service.py          # Gemini 2.5 Flash · 4 mode-aware prompts · few-shot
+│   │       ├── graph_builder.py        # Document graph + LLM_EMB→FEAT node typing
+│   │       ├── gnn_service.py          # 2-layer GAT + NODE_PRED head + fine-tune
+│   │       ├── validation_service.py   # GST · QBCC · sustainability tags
+│   │       ├── abn_service.py          # ABN checksum + ABR API lookup
+│   │       ├── green_kpi_service.py    # green_kpi.* DB writes + stats
 │   │       └── supabase_client.py
 │   ├── ml_models/                   # Auto-created; .pkl + .pt model files (git-ignored)
 │   ├── supabase_schema.sql          # Base schema — run first
@@ -258,7 +328,7 @@ In your Supabase project → **SQL Editor**, run these **two files in order**:
 1. `backend/supabase_schema.sql` — base tables, RLS, storage bucket, RPC functions
 2. `backend/green_kpi_schema.sql` — Green KPI analytics tables (`green_kpi` schema)
 
-Then also run this to create the remaining tables used by the learning pipeline:
+Then also run this to create the remaining tables and columns used by the pipeline:
 
 ```sql
 -- Cluster assignments
@@ -298,6 +368,13 @@ CREATE TABLE IF NOT EXISTS public.extraction_rules (
   created_at  timestamptz DEFAULT now(),
   updated_at  timestamptz DEFAULT now()
 );
+
+-- Document-type label column (v0.9)
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS doc_type_label TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_invoices_doc_type_label
+  ON public.invoices (doc_type_label);
 ```
 
 Then go to **Supabase → Settings → API → Extra Search Path** and add `green_kpi`.
@@ -403,10 +480,11 @@ Restart the backend — it detects PyTorch automatically and switches to full GA
 1. **Sign up** at `/signup` — creates your account and organisation
 2. **Upload** — go to Upload, drag & drop invoice files
 3. **Process** — click the ↻ button on any invoice to run the full pipeline
-4. **Review** — open the invoice to see extracted fields with confidence bars; edit any wrong value inline
-5. **Green KPI strip** — each invoice detail shows compliance chips: GST validity, ABN status, QBCC, retention, sustainability tags
-6. **Organise** — create folders in the Invoices sidebar; the AI suggests the right folder per vendor
-7. **Retrain agents** — after correcting a few invoices, click **Retrain** on the Dashboard
+4. **Review** — open the invoice to see extracted fields with confidence bars; the **doc-type pill** next to the status badge tells you which processing mode was used
+5. **Green KPI strip** — compliance chips: GST validity, ABN status, QBCC, retention, sustainability tags
+6. **Filter by doc type** — use the *Fuel / Multi-page / Low-quality / Handwritten* chips in the Invoices list to see invoices by type
+7. **Organise** — create folders in the Invoices sidebar; the AI suggests the right folder per vendor
+8. **Retrain agents** — after correcting a few invoices, click **Retrain** on the Dashboard
 
 ---
 
@@ -493,6 +571,8 @@ Results are stored in `green_kpi.invoice_data.compliance_flags` and shown instan
 
 Invoices are automatically grouped into clusters by OCR text similarity (TF-IDF + KMeans). Each cluster has a dedicated agent that learns from user corrections.
 
+> **Important:** The vendor TF-IDF + KMeans clusters are separate from the doc-type classifier. Every invoice has both a `cluster_id` (vendor/format cluster for ML learning) and a `doc_type_label` (routing label for LLM/GNN trust). They work together — the cluster agent learns vendor-specific corrections; the doc-type label governs how much Gemini is trusted.
+
 ### How it works
 
 ```
@@ -565,6 +645,8 @@ The GAT's output layer feeds into a `Linear(32 → 9)` classifier that predicts 
 
 Predictions with confidence > 55% either create new fields (when regex/LLM missed them) or boost the confidence of matching existing values.
 
+> GNN is automatically **skipped** for `handwritten_or_very_noisy` invoices — graph features derived from noisy word-boxes are unreliable and would hurt accuracy.
+
 ### GAT fine-tuning from corrections
 
 When **Retrain** is clicked:
@@ -572,6 +654,24 @@ When **Retrain** is clicked:
 2. Each corrected invoice's OCR is re-built into a document graph
 3. A contrastive margin loss is computed — nodes matching wrong values are penalised, nodes matching the corrected values are reinforced
 4. Gradient descent runs for 5 epochs; updated weights are saved to `ml_models/gat_model.pt`
+
+---
+
+## LLM Mode Routing
+
+The Gemini prompt template is selected automatically based on the `doc_type_label` assigned at Step 2.5.
+
+| doc_type_label | LLM mode | Prompt focus | OCR chars |
+|---|---|---|---|
+| `standard_structured` | `llm_augment` | Refines regex/GNN; Gemini wins on higher confidence | 6,000 |
+| `multi_page` | `llm_multipage` | Cross-page total reconciliation; all pages concatenated | **10,000** |
+| `fuel_statement` | `llm_fuel` | Standard fields + `fuel_details` schema | 6,000 |
+| `low_quality_scanned` | `llm_primary` | Gemini is primary; image trusted over OCR text | 6,000 |
+| `handwritten_or_very_noisy` | `llm_primary` | Same as low-quality; GNN skipped | 6,000 |
+
+### Field merge rules
+- **`llm_primary`** — Gemini wins unconditionally for every field (overrides regex and GNN output)
+- **`llm_augment`** — Gemini wins only when its `confidence_score` is higher than the existing value
 
 ---
 
@@ -601,7 +701,7 @@ When Tesseract's average word confidence is below **60%** (blurry scans, handwri
 1. Calls Microsoft TrOCR (`microsoft/trocr-large-printed`) via the HuggingFace Inference API
 2. Uses the TrOCR text output for all downstream extraction
 3. Keeps Tesseract's spatial word boxes (for graph construction)
-4. Reports `ocr_engine: trocr` in the OCR result
+4. Reports `ocr_engine: trocr` in the OCR result — which also triggers `low_quality_scanned` or `handwritten_or_very_noisy` classification at Step 2.5
 
 Requires `HF_TOKEN` in `.env`. If not set, Tesseract output is used regardless of confidence.
 
@@ -610,6 +710,8 @@ Requires `HF_TOKEN` in `.env`. If not set, Tesseract output is used regardless o
 ## Supabase Realtime
 
 `InvoiceDetail` subscribes to `postgres_changes` on the `invoices` table (filtered to the current invoice ID) via a Supabase WebSocket channel. Status changes (preprocessing → ocr_processing → extraction_complete) are pushed instantly to the UI without polling. If the channel errors, it falls back to 2.5s HTTP polling automatically.
+
+`Invoices` also subscribes to `postgres_changes` on the `invoices` table so newly uploaded or just-processed invoices appear instantly without a manual refresh.
 
 ---
 
@@ -621,7 +723,7 @@ Requires `HF_TOKEN` in `.env`. If not set, Tesseract output is used regardless o
 | `GET` | `/api/invoices/{id}` | Invoice + OCR + fields + line items |
 | `DELETE` | `/api/invoices/{id}` | Delete invoice and storage file |
 | `PATCH` | `/api/invoices/{id}/folder` | Assign or unassign a folder |
-| `POST` | `/api/processing/process` | Trigger full pipeline (ABN check included) |
+| `POST` | `/api/processing/process` | Trigger full pipeline (doc-type classify + ABN check included) |
 | `GET` | `/api/processing/status/{id}` | Poll processing status |
 | `POST` | `/api/processing/reset-stuck` | Reset preprocessing/OCR/extraction stuck invoices to failed |
 | `POST` | `/api/extraction/validate` | Save validated field values + write corrections |
@@ -658,7 +760,7 @@ Run storage policies in `supabase_schema.sql` in the Supabase SQL Editor.
 Ensure `SUPABASE_SERVICE_KEY` is the service role key (not anon key) in `backend/.env`.
 
 **Invoices showing "Processing" after they completed**
-The `StatusPill` now correctly maps `extraction_complete` → green Completed pill. If you see this after an old deployment, do a hard refresh (`Ctrl+Shift+R`).
+The `StatusPill` correctly maps `extraction_complete` → green Completed pill. If you see this after an old deployment, do a hard refresh (`Ctrl+Shift+R`).
 
 **Invoices stuck in "Processing" after server restart**
 Background tasks are killed when uvicorn restarts. Call the reset endpoint to unblock them:
@@ -666,6 +768,18 @@ Background tasks are killed when uvicorn restarts. Call the reset endpoint to un
 curl -X POST http://localhost:8000/api/processing/reset-stuck
 ```
 Or click the amber **Reset Stuck** button that appears in the Invoices list when stuck invoices are detected.
+
+**doc_type_label is NULL for old invoices**
+Only invoices processed after v0.9 get a `doc_type_label`. Reprocess old invoices by clicking ↻ to backfill the label.
+
+**All invoices classified as standard_structured**
+The classifier runs after OCR. If OCR fails or returns very short text, there may not be enough signal for fuel/multi-page detection. Check the `[DocType]` log lines in the backend terminal.
+
+**Fuel fields (litres, rego) not appearing**
+Ensure the invoice was classified as `fuel_statement` (check `doc_type_label` in Supabase). If the keywords weren't found in OCR text, you can reprocess — or the field will appear if Gemini extracts it regardless.
+
+**LLM mode always llm_augment**
+The mode is derived from `doc_type_label`. If classification failed (see entry above), the pipeline defaults to `standard_structured` → `llm_augment`. Check `[DocType]` logs.
 
 **ABN check not running / always shows blue badge**
 `ABR_GUID` is not set in `backend/.env`. The local checksum still runs (blue = format + checksum valid). To enable live ABR lookup, register free at https://api.abn.business.gov.au/ and add the GUID to `.env`.
@@ -709,31 +823,48 @@ Add to VS Code `settings.json`:
 
 ## Changelog
 
+### v0.9 — Document-Type Classifier + LLM Mode Routing
+
+- **Rule-based document-type classifier** (`doc_type_classifier.py`) — new Step 2.5 in the pipeline, runs immediately after OCR:
+  - Assigns one of five labels: `standard_structured` · `multi_page` · `fuel_statement` · `low_quality_scanned` · `handwritten_or_very_noisy`
+  - Priority order: handwritten → low_quality → fuel → multi_page → standard
+  - Uses: OCR confidence score, page count, fuel keyword matching, word-box sparsity, garble pattern detection
+  - Stored in new `invoices.doc_type_label` column (TEXT)
+- **Mode-aware Gemini prompts** — `llm_service.encode_invoice()` now accepts a `mode` parameter and dispatches to one of four prompt templates:
+  - `llm_augment` — standard; Gemini refines regex/GNN output
+  - `llm_primary` — low-quality/handwritten; Gemini is the primary source of truth; image trusted over OCR text
+  - `llm_fuel` — fuel statement; standard schema + `fuel_details` (litres, rate_per_litre, vehicle_rego, odometer_km, fuel_type, pump_number, card_number)
+  - `llm_multipage` — multi-page; all pages concatenated; OCR char limit raised from 6k → 10k; cross-page total reconciliation
+- **Smart field merge** — field merge logic respects the mode:
+  - `llm_primary` → Gemini always wins (overrides regex and GNN)
+  - `llm_augment` → Gemini wins only when confidence is higher
+- **Fuel fields stored** — `fuel_*` fields (e.g. `fuel_litres`, `fuel_vehicle_rego`) stored as extracted fields for cluster agent learning
+- **GNN skip for handwritten** — graph construction and GNN inference are both skipped when `gnn_priority == "skip"` (handwritten/very-noisy invoices); logged in processing_stages
+- **`DocTypePill` component** — colour-coded pill displayed next to the StatusPill in Invoice Detail header with tooltip explaining the processing mode used:
+  - 🩶 Standard (slate) · 🟣 Multi-page (violet) · 🟡 Fuel statement (amber) · 🟠 Low-quality scan (orange) · 🔴 Handwritten / noisy (rose)
+- **Doc-type filter chips** in Invoices list — *All types / Standard / Multi-page / Fuel / Low-quality / Handwritten* filter row below existing quick filters
+- **Doc-type mini-pill** in Invoices list view — shown inline on each invoice row for non-standard types
+
 ### v0.8 — ABN Validation + UI Overhaul
 
-- **Automatic ABN + GST validation** — new `abn_service.py` runs as Stage 4.5 on every invoice processed:
-  - Local ABN format check (11 digits) and mod-89 checksum — always runs, no key needed
-  - GST math check: `tax_amount ≈ subtotal × 10%` (±2%) — always runs
-  - Live ABR API lookup when `ABR_GUID` is configured — confirms ABN Active + GST-registered
-  - Results stored in `compliance_flags` and shown in the Green KPI strip automatically
+- **Automatic ABN + GST validation** — new `abn_service.py` runs as Stage 4.5 on every invoice processed
 - **AbnBadge** — colour-coded ABN status chip in the Green KPI strip (green/blue/orange/red)
-- **FieldConfidenceMiniChart** — horizontal Recharts bar chart in Invoice Detail showing per-field confidence; colour-coded green/blue/orange by confidence threshold
-- **OcrCollapsible** — OCR raw text section is now a collapsible card (collapsed by default) with smooth grid-rows Tailwind animation
-- **GreenKpiStrip** — full-width compliance + sustainability strip between the field grid and line items
-- **Invoices list redesign** — filter chips (All / Needs Review / GST Issues), List/Grid segmented control, `VendorConfidenceSparkline`, folder pills, `StatusPill` on each row
-- **StatusPill fix** — `extraction_complete`, `validated`, `exported` now correctly map to the green Completed pill
-- **Reset Stuck endpoint** — `POST /api/processing/reset-stuck` bulk-resets invoices stuck in mid-pipeline states back to `failed` for reprocessing
-- **Micro-animations** — `hover:shadow-lg transition-shadow` on all cards; `hover:scale-[1.02] active:scale-[0.98]` on primary buttons; `animate-fade-in` on filter bar
+- **FieldConfidenceMiniChart** — horizontal Recharts bar chart in Invoice Detail
+- **OcrCollapsible** — OCR raw text section is now a collapsible card
+- **GreenKpiStrip** — full-width compliance + sustainability strip
+- **Invoices list redesign** — filter chips, List/Grid control, VendorConfidenceSparkline
+- **StatusPill fix** — `extraction_complete`, `validated`, `exported` now correctly map to green Completed pill
+- **Reset Stuck endpoint** — `POST /api/processing/reset-stuck`
 - **`abr_guid` added to Settings** — prevents Pydantic `ValidationError` on startup
 
 ### v0.7 — NODE_PRED + LLM Adaptation + Supabase Realtime
-- **NODE_PRED**: GAT now has a `Linear(32 → 9)` classification head predicting the field role of every graph node
-- **LLM_EMB → FEAT bridge**: LLM-extracted field values now guide node semantic type assignment in `graph_builder.py`
-- **TRAIN_LLM**: `encode_invoice()` fetches recent corrections from `green_kpi.corrections` and injects them as few-shot examples into every Gemini prompt
-- **Supabase Realtime**: `InvoiceDetail` replaced HTTP polling with `postgres_changes` WebSocket subscription; graceful polling fallback on channel error
-- **GAT fine-tuning from corrections**: `Retrain` now also runs `retrain_from_corrections()` — rebuilds document graphs for corrected invoices and fine-tunes GAT with a contrastive margin loss
-- **TrOCR fallback**: when Tesseract confidence < 60%, automatically calls `microsoft/trocr-large-printed` via HuggingFace Inference API
-- **green_kpi.corrections write**: `/extraction/validate` now writes field corrections to `green_kpi.corrections` automatically
+- NODE_PRED: GAT now has a `Linear(32 → 9)` classification head
+- LLM_EMB → FEAT bridge: LLM-extracted field values guide node semantic type assignment
+- TRAIN_LLM: correction shots injected into every Gemini prompt
+- Supabase Realtime: replaced HTTP polling with `postgres_changes` WebSocket subscription
+- GAT fine-tuning from corrections: contrastive margin loss
+- TrOCR fallback: when Tesseract confidence < 60%
+- green_kpi.corrections write from `/extraction/validate`
 
 ### v0.6 — Green KPI Architecture (GNN + LLM + Sustainability)
 - Multimodal LLM: Gemini 2.5 Flash analyses invoice image + OCR text
