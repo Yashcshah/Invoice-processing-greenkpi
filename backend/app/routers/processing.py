@@ -155,12 +155,17 @@ async def run_processing_pipeline(
 
                 supabase.table('invoices').update({'status': 'preprocessed'}).eq('id', invoice_id).execute()
         
+        # Doc-type classification state (populated after OCR)
+        doc_type_label: str = "standard_structured"
+        doc_type_strategy: dict = {}
+        _pdf_page_count: int = 1
+
         # Step 2: OCR
         if not skip_ocr:
             supabase.table('invoices').update({'status': 'ocr_processing'}).eq('id', invoice_id).execute()
-            
+
             ocr_service = get_ocr_service()
-            
+
             is_pdf_file = file_path.lower().endswith('.pdf') or processed_path.lower().endswith('.pdf')
 
             if is_pdf_file:
@@ -186,8 +191,9 @@ async def run_processing_pipeline(
                 for r in ocr_results:
                     ocr_result['word_boxes'].extend(r.get('word_boxes') or [])
 
+                _pdf_page_count = len(ocr_results)
                 print(
-                    f"[OCR] PDF processed. pages={len(ocr_results)}, "
+                    f"[OCR] PDF processed. pages={_pdf_page_count}, "
                     f"text_chars={len(ocr_result['raw_text'])}, "
                     f"word_boxes={len(ocr_result['word_boxes'])}, "
                     f"engine={ocr_result['ocr_engine']}"
@@ -217,7 +223,36 @@ async def run_processing_pipeline(
             }).execute()
             
             supabase.table('invoices').update({'status': 'ocr_complete'}).eq('id', invoice_id).execute()
-        
+
+            # ── Step 2.5: Document-type classification ───────────────────────
+            # Runs immediately after OCR, before ML cluster agent.
+            # Assigns one of five labels that control LLM/GNN weighting downstream.
+            try:
+                from app.services.doc_type_classifier import (
+                    classify_doc_type, get_strategy, InvoiceContext as DocTypeCtx,
+                )
+                _word_boxes_for_dt = ocr_result.get('word_boxes') or []
+                _doc_ctx = DocTypeCtx(
+                    page_count=_pdf_page_count,
+                    ocr_engine=ocr_result.get('ocr_engine', 'tesseract'),
+                    avg_ocr_confidence=float(ocr_result.get('confidence_score') or 1.0),
+                    ocr_text=ocr_result.get('raw_text') or '',
+                    line_item_count=0,        # not yet extracted; classifier uses text heuristics
+                    word_box_count=len(_word_boxes_for_dt),
+                )
+                doc_type_label = classify_doc_type(_doc_ctx)
+                doc_type_strategy = get_strategy(doc_type_label)
+                print(
+                    f"[DocType] {invoice_id} → {doc_type_label} | "
+                    f"LLM={doc_type_strategy['llm_priority']} "
+                    f"GNN={doc_type_strategy['gnn_priority']}"
+                )
+                supabase.table('invoices').update(
+                    {'doc_type_label': doc_type_label}
+                ).eq('id', invoice_id).execute()
+            except Exception as _dt_exc:
+                print(f"[DocType] Warning: classification failed — {_dt_exc}")
+
         # Step 3: Field Extraction
         if not skip_extraction and ocr_result:
             supabase.table('invoices').update({'status': 'extraction_processing'}).eq('id', invoice_id).execute()
@@ -331,6 +366,8 @@ async def run_processing_pipeline(
                 extracted_fields=fields if not skip_extraction else {},
                 extracted_line_items=line_items if not skip_extraction else [],
                 supabase=supabase,
+                doc_type_strategy=doc_type_strategy,
+                doc_type_label=doc_type_label,
             )
 
         # Mark as complete
@@ -389,11 +426,32 @@ async def _run_green_kpi_pipeline(
     extracted_fields: dict,
     extracted_line_items: list,
     supabase,
+    doc_type_strategy: dict | None = None,
+    doc_type_label: str = "standard_structured",
 ) -> None:
     """
     Green KPI pipeline: LLM → Graph → GNN → Validate → Store
     Runs after the core extraction pipeline. All stages are try/except wrapped.
+
+    doc_type_strategy keys used here:
+      llm_priority  – "low" | "medium" | "high" | "critical"
+      gnn_priority  – "low" | "medium" | "high" | "skip"
+    doc_type_label used to select Gemini prompt mode and field-merge trust.
     """
+    if doc_type_strategy is None:
+        doc_type_strategy = {}
+
+    # ── Determine LLM mode from doc_type ────────────────────────────────
+    _LLM_MODES = {
+        "standard_structured":       "llm_augment",
+        "multi_page":                "llm_multipage",
+        "fuel_statement":            "llm_fuel",
+        "low_quality_scanned":       "llm_primary",
+        "handwritten_or_very_noisy": "llm_primary",
+    }
+    llm_mode = _LLM_MODES.get(doc_type_label, "llm_augment")
+    # When LLM is primary, always prefer its output over regex/GNN where they disagree
+    llm_is_primary = llm_mode == "llm_primary"
     import time as _time
     settings_obj = get_settings()
 
@@ -425,38 +483,72 @@ async def _run_green_kpi_pipeline(
                 image_path=local_path if not local_path.endswith('.pdf') else None,
                 ocr_text=ocr_result.get('raw_text', ''),
                 word_boxes=ocr_result.get('word_boxes', []),
+                mode=llm_mode,
             )
             dur = int((_time.time() - t0) * 1000)
-            green_kpi_svc.log_stage(gkpi_id, "llm", "ok" if not llm_output.get("skipped") else "skipped", dur,
-                                    {"skip_reason": llm_output.get("skip_reason")})
+            green_kpi_svc.log_stage(
+                gkpi_id, "llm",
+                "ok" if not llm_output.get("skipped") else "skipped",
+                dur,
+                {
+                    "skip_reason": llm_output.get("skip_reason"),
+                    "llm_mode": llm_mode,
+                    "doc_type": doc_type_label,
+                },
+            )
 
-            # Merge LLM fields on top of regex fields (LLM wins where available)
+            # ── Merge LLM fields into extracted_fields ──────────────────
+            # llm_primary  → always prefer LLM (Gemini is primary source of truth)
+            # llm_augment  → LLM wins only when its confidence is higher
             for fname, fdata in llm_output.get("fields", {}).items():
-                if fname not in extracted_fields or \
-                        fdata.get("confidence_score", 0) > extracted_fields[fname].get("confidence_score", 0):
+                existing = extracted_fields.get(fname)
+                if existing is None:
                     extracted_fields[fname] = fdata
+                elif llm_is_primary:
+                    # Low-quality / handwritten: trust Gemini over regex/GNN
+                    extracted_fields[fname] = fdata
+                elif fdata.get("confidence_score", 0) > existing.get("confidence_score", 0):
+                    extracted_fields[fname] = fdata
+
+            # ── Fuel mode: store fuel_details as extra extracted fields ──
+            if llm_mode == "llm_fuel" and llm_output.get("fuel_details"):
+                fd = llm_output["fuel_details"]
+                for fuel_key, fuel_val in fd.items():
+                    if fuel_val is not None:
+                        extracted_fields[f"fuel_{fuel_key}"] = {
+                            "raw_value": str(fuel_val),
+                            "normalized_value": str(fuel_val),
+                            "confidence_score": 0.88,
+                            "extraction_method": "llm_fuel",
+                        }
         except Exception as exc:
             green_kpi_svc.log_stage(gkpi_id, "llm", "error", 0, {"error": str(exc)})
 
     # ── Stage 2: Graph construction ──────────────────────────────────────
+    # Skipped for handwritten/very-noisy invoices — word-boxes are unreliable.
     graph_data = {}
-    t0 = _time.time()
-    try:
-        green_kpi_svc.update_status(gkpi_id, "graph_built")
-        builder = get_graph_builder()
-        graph_data = builder.build(
-            word_boxes=ocr_result.get('word_boxes', []),
-            llm_output=llm_output,
-        )
-        dur = int((_time.time() - t0) * 1000)
-        green_kpi_svc.log_stage(gkpi_id, "graph", "ok", dur,
-                                {"n_nodes": graph_data.get("n_nodes"), "n_edges": graph_data.get("n_edges")})
-    except Exception as exc:
-        green_kpi_svc.log_stage(gkpi_id, "graph", "error", 0, {"error": str(exc)})
+    _skip_gnn = doc_type_strategy.get("gnn_priority") == "skip"
+    if not _skip_gnn:
+        t0 = _time.time()
+        try:
+            green_kpi_svc.update_status(gkpi_id, "graph_built")
+            builder = get_graph_builder()
+            graph_data = builder.build(
+                word_boxes=ocr_result.get('word_boxes', []),
+                llm_output=llm_output,
+            )
+            dur = int((_time.time() - t0) * 1000)
+            green_kpi_svc.log_stage(gkpi_id, "graph", "ok", dur,
+                                    {"n_nodes": graph_data.get("n_nodes"), "n_edges": graph_data.get("n_edges")})
+        except Exception as exc:
+            green_kpi_svc.log_stage(gkpi_id, "graph", "error", 0, {"error": str(exc)})
+    else:
+        green_kpi_svc.log_stage(gkpi_id, "graph", "skipped", 0,
+                                {"reason": "handwritten_or_very_noisy — graph features unreliable"})
 
     # ── Stage 3: GNN reasoning ───────────────────────────────────────────
     graph_embedding = []
-    if settings_obj.gnn_enabled:
+    if settings_obj.gnn_enabled and not _skip_gnn:
         t0 = _time.time()
         try:
             green_kpi_svc.update_status(gkpi_id, "gnn_processed")
@@ -468,6 +560,9 @@ async def _run_green_kpi_pipeline(
             green_kpi_svc.log_stage(gkpi_id, "gnn", "ok", dur, {"mode": gnn_result.get("mode")})
         except Exception as exc:
             green_kpi_svc.log_stage(gkpi_id, "gnn", "error", 0, {"error": str(exc)})
+    elif _skip_gnn:
+        green_kpi_svc.log_stage(gkpi_id, "gnn", "skipped", 0,
+                                {"reason": "handwritten_or_very_noisy — GNN skipped per doc_type strategy"})
 
     # ── Stage 4: Validation + sustainability ─────────────────────────────
     validation_result = {

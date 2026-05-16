@@ -1100,6 +1100,30 @@ const SUSTAIN_TAG_TYPES = new Set([
   'energy_efficiency',
 ])
 
+// ---------------------------------------------------------------------------
+// DocTypePill — shows the doc_type_label assigned by the rule-based classifier
+// ---------------------------------------------------------------------------
+const DOC_TYPE_CONFIG = {
+  standard_structured:       { label: 'Standard',           cls: 'bg-slate-100 text-slate-600 border-slate-200',   tip: 'Clean single-page invoice — regex + GNN + Gemini refinement' },
+  multi_page:                { label: 'Multi-page',         cls: 'bg-violet-50 text-violet-700 border-violet-200', tip: 'Multi-page invoice — Gemini resolves cross-page totals' },
+  fuel_statement:            { label: 'Fuel statement',     cls: 'bg-amber-50 text-amber-700 border-amber-200',    tip: 'Fuel / bowser statement — Gemini extracts litres, rate, rego' },
+  low_quality_scanned:       { label: 'Low-quality scan',   cls: 'bg-orange-50 text-orange-700 border-orange-200', tip: 'Low OCR confidence — Gemini is the primary extraction source' },
+  handwritten_or_very_noisy: { label: 'Handwritten / noisy', cls: 'bg-rose-50 text-rose-700 border-rose-200',     tip: 'Handwritten or very noisy — Gemini-only extraction, GNN skipped' },
+}
+
+function DocTypePill({ docType }) {
+  if (!docType) return null
+  const cfg = DOC_TYPE_CONFIG[docType] ?? { label: docType.replace(/_/g, ' '), cls: 'bg-gray-100 text-gray-600 border-gray-200', tip: '' }
+  return (
+    <span
+      title={cfg.tip}
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
+  )
+}
+
 function AbnBadge({ flags }) {
   const norm     = flags.abn_normalised
   const fmt      = flags.abn_format_valid
@@ -1599,6 +1623,8 @@ export default function InvoiceDetail() {
 
       <div className="flex flex-wrap items-center gap-1.5">
         <StatusPill status={invoice?.status} />
+
+        <DocTypePill docType={invoice?.doc_type_label} />
 
         {avgConfidence !== null && (
           <span

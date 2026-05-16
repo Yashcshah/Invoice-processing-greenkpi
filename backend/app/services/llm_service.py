@@ -37,11 +37,11 @@ except ImportError:
     _GENAI_AVAILABLE = False
 
 
-_EXTRACTION_PROMPT = """\
-You are an expert invoice parser. Analyse the attached invoice image together with the OCR text provided below.
+# ---------------------------------------------------------------------------
+# Prompts — one base + mode-specific additions
+# ---------------------------------------------------------------------------
 
-Return ONLY valid JSON — no markdown, no explanation. The JSON must follow this exact schema:
-
+_BASE_SCHEMA = """\
 {
   "vendor_name": "string or null",
   "invoice_number": "string or null",
@@ -78,7 +78,9 @@ Return ONLY valid JSON — no markdown, no explanation. The JSON must follow thi
     "qbcc_applicable": true_or_false,
     "retention_applicable": true_or_false
   }
-}
+}"""
+
+_COMMON_FOOTER = """\
 
 Sustainability tags — use ONLY tags from this list when applicable:
 renewable_energy, solar, wind, carbon_offset, recycled_materials, low_emissions,
@@ -92,6 +94,68 @@ the invoice mentions retention or progress claims.
 OCR TEXT:
 {ocr_text}
 """
+
+# ── llm_augment (default — Gemini refines regex/GNN output) ─────────────────
+_EXTRACTION_PROMPT = (
+    "You are an expert invoice parser. Analyse the attached invoice image together "
+    "with the OCR text provided below.\n\n"
+    "Return ONLY valid JSON — no markdown, no explanation. "
+    "The JSON must follow this exact schema:\n\n"
+    + _BASE_SCHEMA
+    + _COMMON_FOOTER
+)
+
+# ── llm_primary (low-quality / handwritten — trust Gemini over regex) ────────
+_EXTRACTION_PROMPT_PRIMARY = (
+    "You are an expert invoice parser working on a LOW-QUALITY or HANDWRITTEN document.\n"
+    "The OCR text may contain errors, garbled characters, or missing words. "
+    "Your visual analysis of the attached image is the PRIMARY source of truth — "
+    "treat the OCR text as a rough guide only.\n\n"
+    "Extract all fields as accurately as possible from the image. "
+    "If the image and OCR disagree, prefer the image.\n\n"
+    "Return ONLY valid JSON — no markdown, no explanation. "
+    "The JSON must follow this exact schema:\n\n"
+    + _BASE_SCHEMA
+    + _COMMON_FOOTER
+)
+
+# ── fuel mode (fuel_statement — ask for fuel-specific fields) ────────────────
+_EXTRACTION_PROMPT_FUEL = (
+    "You are an expert invoice parser specialised in FUEL / BOWSER STATEMENTS.\n\n"
+    "In addition to the standard invoice fields, extract these fuel-specific fields "
+    "and include them in a top-level \"fuel_details\" object:\n\n"
+    "{\n"
+    '  "fuel_details": {\n'
+    '    "litres": number_or_null,\n'
+    '    "rate_per_litre": number_or_null,\n'
+    '    "fuel_type": "diesel | petrol | unleaded | lpg | avgas | biodiesel | other | null",\n'
+    '    "vehicle_rego": "string or null",\n'
+    '    "odometer_km": number_or_null,\n'
+    '    "pump_number": "string or null",\n'
+    '    "card_number": "string or null"\n'
+    "  }\n"
+    "}\n\n"
+    "Return ONLY valid JSON. The root object must contain both the standard fields "
+    "AND fuel_details.\n\n"
+    "Standard schema:\n\n"
+    + _BASE_SCHEMA
+    + _COMMON_FOOTER
+)
+
+# ── multi-page mode — Gemini resolves cross-page totals ─────────────────────
+_EXTRACTION_PROMPT_MULTIPAGE = (
+    "You are an expert invoice parser processing a MULTI-PAGE invoice.\n\n"
+    "The OCR text below contains all pages concatenated with '\\n\\n' between pages. "
+    "Pay special attention to:\n"
+    "  • Totals, subtotals, and GST that may appear on a different page from line items.\n"
+    "  • Header fields (vendor, invoice number, dates) that typically appear on page 1.\n"
+    "  • Running totals or 'brought forward' figures across pages.\n\n"
+    "Reconcile cross-page figures and return a single consolidated JSON record. "
+    "Return ONLY valid JSON — no markdown, no explanation. "
+    "The JSON must follow this exact schema:\n\n"
+    + _BASE_SCHEMA
+    + _COMMON_FOOTER
+)
 
 
 class LLMService:
@@ -123,17 +187,32 @@ class LLMService:
     # Public API
     # ------------------------------------------------------------------
 
+    # Maps doc_type_label → llm_mode for callers that only have the label
+    DOC_TYPE_TO_MODE: Dict[str, str] = {
+        "standard_structured":       "llm_augment",
+        "multi_page":                "llm_multipage",
+        "fuel_statement":            "llm_fuel",
+        "low_quality_scanned":       "llm_primary",
+        "handwritten_or_very_noisy": "llm_primary",
+    }
+
     async def encode_invoice(
         self,
         image_path: Optional[str],
         ocr_text: str,
         word_boxes: Optional[List[Dict]] = None,
         invoice_id: Optional[str] = None,
+        mode: str = "llm_augment",
     ) -> Dict[str, Any]:
         """
         Run multimodal LLM on invoice image + OCR text.
 
         Args:
+            mode: one of
+                "llm_augment"   – standard; Gemini refines regex/GNN (default)
+                "llm_primary"   – low-quality/handwritten; trust Gemini over regex
+                "llm_fuel"      – fuel statement; adds fuel-specific schema fields
+                "llm_multipage" – multi-page; Gemini resolves cross-page totals
             invoice_id: optional — used to fetch correction shots for few-shot
                         adaptation (TRAIN_LLM → PIPELINE in the feedback loop).
 
@@ -144,6 +223,8 @@ class LLMService:
               layout_segments: {...},
               compliance: {...},
               confidence: {...},
+              fuel_details: {...},   # only present for llm_fuel mode
+              llm_mode: str,
               llm_prompt: str,
               llm_response_raw: str,
               skipped: bool,
@@ -155,21 +236,38 @@ class LLMService:
 
         start = time.time()
 
+        # Select prompt template based on mode
+        _prompt_templates = {
+            "llm_augment":   _EXTRACTION_PROMPT,
+            "llm_primary":   _EXTRACTION_PROMPT_PRIMARY,
+            "llm_fuel":      _EXTRACTION_PROMPT_FUEL,
+            "llm_multipage": _EXTRACTION_PROMPT_MULTIPAGE,
+        }
+        base_template = _prompt_templates.get(mode, _EXTRACTION_PROMPT)
+
         # TRAIN_LLM adaptation: inject recent user corrections as few-shot context
         correction_shots = await self._get_correction_shots()
-        base_prompt = _EXTRACTION_PROMPT + correction_shots
-        prompt_text = base_prompt.replace("{ocr_text}", ocr_text[:6000])
+        base_prompt = base_template + correction_shots
+
+        # Truncate OCR text — give multipage more room
+        ocr_limit = 10000 if mode == "llm_multipage" else 6000
+        prompt_text = base_prompt.replace("{ocr_text}", ocr_text[:ocr_limit])
+
+        print(f"[LLMService] mode={mode} ocr_chars={len(ocr_text)} image={'yes' if image_path else 'no'}")
 
         try:
             parts: list = [prompt_text]
 
             # Attach image if available
+            # For llm_primary mode, image is mandatory — emit a warning if missing
             if image_path and Path(image_path).exists():
                 with open(image_path, "rb") as f:
                     img_bytes = f.read()
                 ext = Path(image_path).suffix.lower().lstrip(".")
                 mime = "image/png" if ext == "png" else "image/jpeg"
                 parts.insert(0, {"mime_type": mime, "data": img_bytes})
+            elif mode == "llm_primary":
+                print("[LLMService] WARNING: llm_primary mode without image — OCR quality may be poor")
 
             response = self._model.generate_content(parts)
             raw_text = response.text.strip()
@@ -177,21 +275,28 @@ class LLMService:
             parsed = self._parse_response(raw_text)
             elapsed = int((time.time() - start) * 1000)
 
-            return {
+            result = {
                 "fields": self._extract_fields(parsed),
                 "sustainability_tags": parsed.get("sustainability_tags", []),
                 "layout_segments": parsed.get("layout_segments", {}),
                 "compliance": parsed.get("compliance", {}),
                 "confidence": parsed.get("confidence", {}),
                 "line_items": parsed.get("line_items", []),
+                "llm_mode": mode,
                 "llm_prompt": prompt_text,
                 "llm_response_raw": raw_text,
                 "skipped": False,
                 "processing_time_ms": elapsed,
             }
 
+            # Fuel mode: surface fuel_details at top level for pipeline consumption
+            if mode == "llm_fuel" and "fuel_details" in parsed:
+                result["fuel_details"] = parsed["fuel_details"]
+
+            return result
+
         except Exception as exc:
-            print(f"[LLMService] Inference error: {exc}")
+            print(f"[LLMService] Inference error (mode={mode}): {exc}")
             return self._empty_result(reason=str(exc))
 
     # ------------------------------------------------------------------

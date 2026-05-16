@@ -98,6 +98,7 @@ export default function Invoices() {
   const [notification, setNotification] = useState(null)
   const [resettingStuck, setResettingStuck] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [docTypeFilter, setDocTypeFilter] = useState('all')
 
   useEffect(() => {
     axios.get('/api/folders').then((res) => setFolders(res.data.folders)).catch(() => {})
@@ -253,6 +254,23 @@ export default function Invoices() {
     }
   }
 
+  const DOC_TYPE_FILTERS = [
+    { id: 'all',                    label: 'All types' },
+    { id: 'standard_structured',    label: 'Standard' },
+    { id: 'multi_page',             label: 'Multi-page' },
+    { id: 'fuel_statement',         label: 'Fuel' },
+    { id: 'low_quality_scanned',    label: 'Low-quality' },
+    { id: 'handwritten_or_very_noisy', label: 'Handwritten' },
+  ]
+
+  const DOC_TYPE_PILL_CLS = {
+    standard_structured:       'bg-slate-100 text-slate-600',
+    multi_page:                'bg-violet-50 text-violet-700',
+    fuel_statement:            'bg-amber-50 text-amber-700',
+    low_quality_scanned:       'bg-orange-50 text-orange-700',
+    handwritten_or_very_noisy: 'bg-rose-50 text-rose-700',
+  }
+
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
       if (
@@ -270,9 +288,11 @@ export default function Invoices() {
         return inv.compliance_flags?.gst_valid === false
       }
 
+      if (docTypeFilter !== 'all' && inv.doc_type_label !== docTypeFilter) return false
+
       return true
     })
-  }, [invoices, searchQuery, quickFilter, gstIssueIds])
+  }, [invoices, searchQuery, quickFilter, gstIssueIds, docTypeFilter])
 
   const needsReviewCount = useMemo(
     () => invoices.filter((inv) => REVIEW_STATUSES.has(inv.status)).length,
@@ -504,6 +524,26 @@ export default function Invoices() {
                     </button>
                   ))}
                 </div>
+
+                {/* Doc-type filter chips */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mr-1">
+                    Doc type
+                  </span>
+                  {DOC_TYPE_FILTERS.map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setDocTypeFilter(f.id)}
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                        docTypeFilter === f.id
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : `border border-slate-200 ${DOC_TYPE_PILL_CLS[f.id] ?? 'bg-white text-slate-600'} hover:border-blue-300`
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -650,6 +690,15 @@ export default function Invoices() {
                               <span className="truncate">{fname}</span>
                             </span>
                           ) : null}
+
+                          {inv.doc_type_label && inv.doc_type_label !== 'standard_structured' && (
+                            <span
+                              title={inv.doc_type_label.replace(/_/g, ' ')}
+                              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold border border-slate-200 ${DOC_TYPE_PILL_CLS[inv.doc_type_label] ?? 'bg-gray-100 text-gray-600'}`}
+                            >
+                              {DOC_TYPE_FILTERS.find((f) => f.id === inv.doc_type_label)?.label ?? inv.doc_type_label}
+                            </span>
+                          )}
 
                           <StatusPill status={inv.status} />
 
